@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
@@ -10,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	pb "federated-learning/fl-selector/genproto/fl_intra"
+	pbIntra "federated-learning/fl-selector/genproto/fl_intra"
+	pbRound "federated-learning/fl-selector/genproto/fl_round"
 
 	"google.golang.org/grpc"
 )
@@ -20,19 +22,18 @@ var start time.Time
 // constants
 const (
 	port = ":50051"
-	// modelFilePath               = "./data/model/model.h5"
-	// checkpointFilePath          = "./data/checkpoint/fl_checkpoint"
-	// weightUpdatesDir            = "./data/weight_updates/"
+	modelFilePath               = "./data/model/model.h5"
+	checkpointFilePath          = "./data/checkpoint/fl_checkpoint"
+	weightUpdatesDir            = "./data/weight_updates/"
 	chunkSize                   = 64 * 1024
 	postCheckinReconnectionTime = 8000
 	postUpdateReconnectionTime  = 8000
-	// estimatedRoundTime          = 8000
+	estimatedRoundTime          = 8000
 	estimatedWaitingTime = 20000
-	// checkinLimit                = 3
-	// updateLimit                 = 3
-	// VAR_NUM_CHECKINS            = 0
-	// VAR_NUM_UPDATES_START       = 1
-	// VAR_NUM_UPDATES_FINISH      = 2
+	checkinLimit                = 3
+	VAR_NUM_CHECKINS            = 0
+	VAR_NUM_UPDATES_START       = 1
+	VAR_NUM_UPDATES_FINISH      = 2
 )
 
 // store the result from a client
@@ -85,8 +86,9 @@ func main() {
 		reads:             make(chan readOp),
 		writes:            make(chan writeOp),
 		selected:          make(chan bool)}
-	// register FL round server
-	pb.RegisterFlRoundServer(srv, flServer)
+	// register FL intra server
+	pbIntra.RegisterFlIntraServer(srv, flServer)
+	pbRound.RegisterFlRoundServer(srv, flServer)
 
 	// go flServer.EventLoop()
 	go flServer.ConnectionHandler()
@@ -97,9 +99,9 @@ func main() {
 }
 
 // Check In rpc
-// Client check in with FL server
-// Server responds with FL checkpoint
-func (s *server) CheckIn(stream pb.FlRound_CheckInServer) error {
+// Client check in with FL selector
+// Selector send count to Coordinator and waits for signal from it
+func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 
 	var (
 		buf  []byte
@@ -112,32 +114,24 @@ func (s *server) CheckIn(stream pb.FlRound_CheckInServer) error {
 	log.Println("CheckIn Request: Client Name: ", checkinReq.Message, "Time:", time.Since(start))
 
 	// create a write operation
-	// write := writeOp{
-	// 	varType:  VAR_NUM_CHECKINS,
-	// 	response: make(chan bool)}
-	// // send to handler(ConnectionHandler) via writes channel
-	// s.writes <- write
-
-	// // wait for response
-	// if !(<-write.response) {
-	// 	log.Println("CheckIn rejected")
-	// 	err := stream.Send(&pb.FlData{
-	// 		IntVal: postCheckinReconnectionTime,
-	// 		Type:   pb.Type_FL_RECONN_TIME,
-	// 	})
-	// 	check(err, "Unable to send post checkin reconnection time")
-	// 	return nil
-	// }
+	write := writeOp{
+		varType:  VAR_NUM_CHECKINS,
+		response: make(chan bool)}
+	// send to handler(ConnectionHandler) via writes channel
+	s.writes <- write
+	
+	<-write.response
 
 	// send msg to coordinator
+
 
 	// wait for start of configuration
 
 	// if !(<-s.selected) {
 	// 	log.Println("Not selected")
-	// 	err := stream.Send(&pb.FlData{
+	// 	err := stream.Send(&pbRound.FlData{
 	// 		IntVal: postCheckinReconnectionTime,
-	// 		Type:   pb.Type_FL_RECONN_TIME,
+	// 		Type:   pbRound.Type_FL_RECONN_TIME,
 	// 	})
 	// 	check(err, "Unable to send post checkin reconnection time")
 	// 	return nil
@@ -160,11 +154,11 @@ func (s *server) CheckIn(stream pb.FlRound_CheckInServer) error {
 		check(err, "Unable to read checkpoint file")
 
 		// send the FL checkpoint Data (file chunk + type: FL checkpoint)
-		err = stream.Send(&pb.FlData{
-			Message: &pb.Chunk{
+		err = stream.Send(&pbRound.FlData{
+			Message: &pbRound.Chunk{
 				Content: buf[:n],
 			},
-			Type: pb.Type_FL_CHECKPOINT,
+			Type: pbRound.Type_FL_CHECKPOINT,
 		})
 		check(err, "Unable to send checkpoint data")
 	}
@@ -174,7 +168,7 @@ func (s *server) CheckIn(stream pb.FlRound_CheckInServer) error {
 // Update rpc
 // Accumulate FL checkpoint update sent by client
 // TODO: delete file when error and after round completes
-func (s *server) Update(stream pb.FlRound_UpdateServer) error {
+func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 
 	var checkpointWeight int64
 
@@ -242,45 +236,34 @@ func (s *server) Update(stream pb.FlRound_UpdateServer) error {
 				log.Println("Checkpoint Update confirmed. Time:", time.Since(start))
 			}
 
-			return stream.SendAndClose(&pb.FlData{
+			return stream.SendAndClose(&pbRound.FlData{
 				IntVal: postUpdateReconnectionTime,
-				Type:   pb.Type_FL_RECONN_TIME,
+				Type:   pbRound.Type_FL_RECONN_TIME,
 			})
 		}
 		check(err, "Unable to receive update data from client")
 
-		if flData.Type == pb.Type_FL_CHECKPOINT_UPDATE {
+		if flData.Type == pbRound.Type_FL_CHECKPOINT_UPDATE {
 			// write data to file
 			_, err = file.Write(flData.Message.Content)
 			check(err, "Unable to write into new checkpoint file")
-		} else if flData.Type == pb.Type_FL_CHECKPOINT_WEIGHT {
+		} else if flData.Type == pbRound.Type_FL_CHECKPOINT_WEIGHT {
 			checkpointWeight = flData.IntVal
 		}
 	}
 
 }
 
-// Runs federated averaging
-func (s *server) FederatedAveraging() {
-	// determine arguments
-	// args := ""
-	// for _, v := range s.checkpointUpdates {
-	// 	args += strconv.FormatInt(v.checkpointWeight, 10) + " " + v.checkpointFilePath + " "
-	// }
-
-	//argsList := []string{"federated_averaging.py", "--cf", checkpointFilePath, "--mf", modelFilePath, "--u", "281", "./device1/weight_updates", "281", "./device2/weight_updates", "296", "./device3/weight_updates"}
+// Runs mid averaging
+func (s *server) MidAveraging() {
 
 	var argsList []string
-	argsList = append(argsList, "federated_averaging.py", "--cf", checkpointFilePath, "--mf", modelFilePath, "--u")
+	argsList = append(argsList, "mid_averaging.py", "--cf", checkpointFilePath, "--mf", modelFilePath, "--u")
 	for _, v := range s.checkpointUpdates {
 		argsList = append(argsList, strconv.FormatInt(v.checkpointWeight, 10), v.checkpointFilePath)
 	}
 
 	log.Println("Arguments passed to federated averaging python file: ", argsList)
-
-	// if args == "" {
-	// 	return
-	// }
 
 	// model path
 	cmd := exec.Command("python", argsList...)
@@ -288,6 +271,10 @@ func (s *server) FederatedAveraging() {
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	check(err, "Unable to run federated averaging")
+
+
+	// TODO : send mid averaged weight updates and total batch size
+
 }
 
 // Handler for connection reads and updates
@@ -315,22 +302,8 @@ func (s *server) ConnectionHandler() {
 			case VAR_NUM_CHECKINS:
 				s.numCheckIns++
 				log.Println("Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))
-				// if number of checkins exceed the limit, reject this one
-				if s.numCheckIns > checkinLimit {
-					log.Println("Handler ==> Excess checkins", "Time:", time.Since(start))
-					write.response <- false
-				} else if s.numCheckIns == checkinLimit {
-					log.Println("Handler ==> accepted", time.Since(start))
-					write.response <- true
-					// send selection success
-					log.Println("Handler ==> Limit reached, selecting now", "Time:", time.Since(start))
-					for i := 0; i < s.numCheckIns; i++ {
-						s.selected <- true
-					}
-				} else {
-					log.Println("Handler ==> accepted", "Time:", time.Since(start))
-					write.response <- true
-				}
+				log.Println("Handler ==> accepted", "Time:", time.Since(start))
+				write.response <- true
 			case VAR_NUM_UPDATES_START:
 				s.numUpdatesStart++
 				log.Println("Handler ==> numUpdates", s.numUpdatesStart, "Time:", time.Since(start))
@@ -344,10 +317,10 @@ func (s *server) ConnectionHandler() {
 				write.response <- true
 
 				// if enough updates available, start FA
-				if s.numUpdatesFinish == updateLimit {
+				if s.numUpdatesFinish == s.numUpdatesStart {
 					// begin federated averaging process
-					log.Println("Begin FA Process")
-					s.FederatedAveraging()
+					log.Println("Begin Mid Averaging Process")
+					s.MidAveraging()
 					s.resetFLVariables()
 				}
 			}
@@ -356,18 +329,19 @@ func (s *server) ConnectionHandler() {
 			log.Println("Timeout")
 			// if checkin limit is not reached
 			// abandon round
-			if s.numCheckIns < checkinLimit {
-				log.Println("Round Abandoned!")
-				// reject all devices
-				for i := 0; i < s.numCheckIns; i++ {
-					s.selected <- false
-				}
-				// reset
-				s.resetFLVariables()
-			}
+			// TODO: after checkin is done
+			
 			// TODO: Decide about updates not received in time
 		}
 	}
+}
+
+func (s *server) ClientCountUpdate(ctx context.Context, clientCount *pbIntra.ClientCount) (*pbIntra.Empty, error) {
+	return &pbIntra.Empty{}, nil
+}
+
+func (s *server) BeginConfiguration(ctx context.Context, empty *pbIntra.Empty) (*pbIntra.Empty, error) {
+	return &pbIntra.Empty{}, nil
 }
 
 // Check for error, log and exit if err
