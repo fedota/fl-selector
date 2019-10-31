@@ -18,25 +18,27 @@ import (
 )
 
 var start time.Time
-
+var port string
 // constants
 const (
-	coordinatorAddress			= "localhost:50050"
-	port = ":50051"
+	coordinatorAddress          = "localhost:50050"
 	modelFilePath               = "./data/model/model.h5"
 	checkpointFilePath          = "./data/checkpoint/fl_checkpoint"
-	aggregateCheckpointFilePath          = "./data/checkpoint/fl_agg_checkpoint"
+	aggregateCheckpointFilePath = "./data/checkpoint/fl_agg_checkpoint"
 	weightUpdatesDir            = "./data/weight_updates/"
 	chunkSize                   = 64 * 1024
 	postCheckinReconnectionTime = 8000
 	postUpdateReconnectionTime  = 8000
 	// estimatedRoundTime          = 8000
 	estimatedWaitingTime = 20000
-	checkinLimit                = 3
-	VAR_NUM_CHECKINS            = 0
-	VAR_NUM_UPDATES_START       = 1
-	VAR_NUM_UPDATES_FINISH      = 2
-	VAR_NUM_SELECTED            = 0
+	checkinLimit         = 3
+)
+
+const (
+	VAR_NUM_CHECKINS       = iota
+	VAR_NUM_UPDATES_START  = iota
+	VAR_NUM_UPDATES_FINISH = iota
+	VAR_NUM_SELECTED       = iota
 )
 
 // store the result from a client
@@ -60,11 +62,11 @@ type writeOp struct {
 
 // server struct to implement gRPC Round service interface
 type server struct {
-	selectorId	int
-	clientCountReads             chan readOp
-	clientCountWrites            chan writeOp
-	updateCountReads             chan readOp
-	updateCountWrites            chan writeOp
+	selectorId        int
+	clientCountReads  chan readOp
+	clientCountWrites chan writeOp
+	updateCountReads  chan readOp
+	updateCountWrites chan writeOp
 	selected          chan bool
 	numCheckIns       int
 	numSelected       int
@@ -78,7 +80,16 @@ func init() {
 	start = time.Now()
 }
 
-func main() {	
+func main() {
+
+	// Enable line numbers in logging
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	if len(os.Args) < 2 {
+		log.Fatalln("Usage: go run ", os.Args[0], " <Selector Port>")
+	}
+	port = ":" + os.Args[1]
+
 	// listen
 	lis, err := net.Listen("tcp", port)
 	check(err, "Failed to listen on port"+port)
@@ -86,15 +97,16 @@ func main() {
 	srv := grpc.NewServer()
 	// server impl instance
 	flServer := &server{
-		selectorId:	1,
+		selectorId:        1,
 		numCheckIns:       0,
 		numUpdatesStart:   0,
 		numUpdatesFinish:  0,
+		numSelected:       0,
 		checkpointUpdates: make(map[int]flRoundClientResult),
-		clientCountReads:             make(chan readOp),
-		clientCountWrites:            make(chan writeOp),
-		updateCountReads:             make(chan readOp),
-		updateCountWrites:            make(chan writeOp),
+		clientCountReads:  make(chan readOp),
+		clientCountWrites: make(chan writeOp),
+		updateCountReads:  make(chan readOp),
+		updateCountWrites: make(chan writeOp),
 		selected:          make(chan bool)}
 	// register FL round server
 	pbRound.RegisterFlRoundServer(srv, flServer)
@@ -127,14 +139,13 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 
 	// create a write operation
 	write := writeOp{
-		varType:  VAR_NUM_CHECKINS, 
+		varType:  VAR_NUM_CHECKINS,
 		response: make(chan int)}
 	// send to handler(ClientSelectionHandler) via writes channel
 	s.clientCountWrites <- write
-	<-write.response
 
 	// wait for start of configuration (by ClientSelectionHandler)
-	if !(<-s.selected) {
+	if (<-write.response) == -1 || !(<-s.selected) {
 		log.Println("Not selected")
 		err := stream.Send(&pbRound.FlData{
 			IntVal: postCheckinReconnectionTime,
@@ -189,7 +200,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 		response: make(chan int)}
 	// send to handler (ClientConnectionUpdateHandler) via writes channel
 	s.updateCountWrites <- write
-	index := <- write.response
+	index := <-write.response
 
 	log.Println("Index : ", index)
 
@@ -247,28 +258,31 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 }
 
 // Once broadcast to proceed with configuration is receivec from the coordinator
-// based on the count, the rountine waiting on selected channel are sent messages 
+// based on the count, the rountine waiting on selected channel are sent messages
 func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*pbIntra.Empty, error) {
+	log.Println("Broadcast Received")
 	// get the number of selected clients
-	read := readOp {
-		varType: VAR_NUM_SELECTED,
+	read := readOp{
+		varType:  VAR_NUM_SELECTED,
 		response: make(chan int)}
 	s.clientCountReads <- read
 	numSelected := <-read.response
 
 	// get the number of checkIn clients
 	read = readOp{
-		varType: VAR_NUM_CHECKINS,
+		varType:  VAR_NUM_CHECKINS,
 		response: make(chan int)}
 	s.clientCountReads <- read
 	numCheckIns := <-read.response
+
+	log.Println("CheckIns: ", numCheckIns, "Selected: ", numSelected)
 
 	// select num selected number of clients
 	for i := 0; i < numSelected; i++ {
 		s.selected <- true
 	}
 	// reject the rest
-	for i := 0; i < numCheckIns - numSelected; i++ {
+	for i := 0; i < numCheckIns-numSelected; i++ {
 		s.selected <- false
 	}
 
@@ -276,12 +290,12 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 }
 
 // Runs mid averaging
-// then sends the aggrageted checkpoint and total weight to the coordinator 
+// then sends the aggrageted checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
 
 	var argsList []string
 	argsList = append(argsList, "mid_averaging.py", "--cf", aggregateCheckpointFilePath, "--mf", modelFilePath, "--u")
-	var totalWeight int64 = 0 
+	var totalWeight int64 = 0
 	for _, v := range s.checkpointUpdates {
 		totalWeight += v.checkpointWeight
 		argsList = append(argsList, strconv.FormatInt(v.checkpointWeight, 10), v.checkpointFilePath)
@@ -302,10 +316,10 @@ func (s *server) MidAveraging() {
 		file *os.File
 	)
 
-	log.Println("Post Averaging ==> Sending checkpoint file", 	"Time:", time.Since(start))
+	log.Println("Post Averaging ==> Sending checkpoint file", "Time:", time.Since(start))
 
 	// connect to the coordinator
-	conn, err := grpc.Dial(coordinatorAddress)
+	conn, err := grpc.Dial(coordinatorAddress, grpc.WithInsecure())
 	check(err, "Unable to connect to coordinator")
 	client := pbIntra.NewFlIntraClient(conn)
 
@@ -329,10 +343,12 @@ func (s *server) MidAveraging() {
 		if err == io.EOF {
 			err = updateStream.Send(&pbIntra.FlData{
 				IntVal: totalWeight,
-				Type: pbIntra.Type_FL_CHECKPOINT_WEIGHT,
+				Type:   pbIntra.Type_FL_CHECKPOINT_WEIGHT,
 			})
 			check(err, "Unable to send checkpoint data")
 			log.Println("Selection Handler ==> Sent aggregated checkpoint and weight", "Time:", time.Since(start))
+			_, err := updateStream.CloseAndRecv()
+			check(err, "Unable to close coordinator connection")
 			return
 		}
 		check(err, "Unable to read checkpoint file")
@@ -355,7 +371,7 @@ func (s *server) ClientSelectionHandler() {
 		select {
 		case read := <-s.clientCountReads:
 			switch read.varType {
-			case VAR_NUM_UPDATES_START:
+			case VAR_NUM_CHECKINS:
 				log.Println("Selection Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
 				read.response <- s.numCheckIns
 			case VAR_NUM_SELECTED:
@@ -365,18 +381,22 @@ func (s *server) ClientSelectionHandler() {
 		case write := <-s.clientCountWrites:
 			log.Println("Selection Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
 			s.numCheckIns++
-			log.Println("Selection Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))	
-			write.response <- s.numCheckIns
-	
+			log.Println("Selection Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))
+			// write.response <- s.numCheckIns
+
 			// send client count to coordinator
-			conn, err := grpc.Dial(coordinatorAddress)
+			conn, err := grpc.Dial(coordinatorAddress, grpc.WithInsecure())
 			check(err, "Unable to connect to coordinator")
 			client := pbIntra.NewFlIntraClient(conn)
 			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: uint32(s.selectorId)})
 			check(err, "Unable to send client count")
 			log.Println("Selection Handler ==> Sent client count", s.numCheckIns, "Time:", time.Since(start))
-			if (result.Accepted) {
+			if result.Accepted {
 				s.numSelected++
+				write.response <- s.numSelected
+
+			} else {
+				write.response <- -1
 			}
 		}
 	}
@@ -410,9 +430,9 @@ func (s *server) ClientConnectionUpdateHandler() {
 				log.Println("Handler ==> numUpdates: ", s.numUpdatesFinish, "Finish Time:", time.Since(start))
 				log.Println("Handler ==> accepted update", "Time:", time.Since(start))
 				write.response <- s.numUpdatesStart
-				
+
 				// if enough updates available, start FA
-				if s.numUpdatesFinish == s.numUpdatesStart {
+				if s.numUpdatesFinish == s.numSelected {
 					// begin federated averaging process
 					log.Println("Begin Mid Averaging Process")
 					s.MidAveraging()
@@ -425,12 +445,11 @@ func (s *server) ClientConnectionUpdateHandler() {
 			// if checkin limit is not reached
 			// abandon round
 			// TODO: after checkin is done
-			
+
 			// TODO: Decide about updates not received in time
 		}
 	}
 }
-
 
 // Check for error, log and exit if err
 func check(err error, errorMsg string) {
