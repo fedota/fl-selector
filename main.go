@@ -21,6 +21,7 @@ var start time.Time
 
 // constants
 const (
+	coordinatorAddress			= "localhost:50050"
 	port = ":50051"
 	modelFilePath               = "./data/model/model.h5"
 	checkpointFilePath          = "./data/checkpoint/fl_checkpoint"
@@ -52,13 +53,15 @@ type readOp struct {
 type writeOp struct {
 	varType  int
 	val      int
-	response chan bool
+	response chan int
 }
 
 // server struct to implement gRPC Round service interface
 type server struct {
-	reads             chan readOp
-	writes            chan writeOp
+	checkInCountReads             chan readOp
+	checkInCountWrites            chan writeOp
+	updateCountReads             chan readOp
+	updateCountWrites            chan writeOp
 	selected          chan bool
 	numCheckIns       int
 	numUpdatesStart   int
@@ -87,11 +90,10 @@ func main() {
 		writes:            make(chan writeOp),
 		selected:          make(chan bool)}
 	// register FL intra server
-	pbIntra.RegisterFlIntraServer(srv, flServer)
 	pbRound.RegisterFlRoundServer(srv, flServer)
 
-	// go flServer.EventLoop()
-	go flServer.ConnectionHandler()
+	go flServer.CoordinatorConnectionHandler()
+	go flServer.ClientConnectionHandler()
 
 	// start serving
 	err = srv.Serve(lis)
@@ -114,28 +116,22 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	log.Println("CheckIn Request: Client Name: ", checkinReq.Message, "Time:", time.Since(start))
 
 	// create a write operation
-	write := writeOp{
-		varType:  VAR_NUM_CHECKINS,
-		response: make(chan bool)}
-	// send to handler(ConnectionHandler) via writes channel
+	write := writeOp{varType:  VAR_NUM_CHECKINS}
+	// send to handler(ClientSelectionHandler) via writes channel
 	s.writes <- write
-	
-	<-write.response
 
-	// send msg to coordinator
+	// wait for start of configuration (by ClientSelectionHandler)
+	if !(<-s.selected) {
+		log.Println("Not selected")
+		err := stream.Send(&pbRound.FlData{
+			IntVal: postCheckinReconnectionTime,
+			Type:   pbRound.Type_FL_RECONN_TIME,
+		})
+		check(err, "Unable to send post checkin reconnection time")
+		return nil
+	}
 
-
-	// wait for start of configuration
-
-	// if !(<-s.selected) {
-	// 	log.Println("Not selected")
-	// 	err := stream.Send(&pbRound.FlData{
-	// 		IntVal: postCheckinReconnectionTime,
-	// 		Type:   pbRound.Type_FL_RECONN_TIME,
-	// 	})
-	// 	check(err, "Unable to send post checkin reconnection time")
-	// 	return nil
-	// }
+	// Proceed with sending checkpoint file 
 
 	// open file
 	file, err = os.Open(checkpointFilePath)
@@ -178,27 +174,9 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	write := writeOp{
 		varType:  VAR_NUM_UPDATES_START,
 		response: make(chan bool)}
-	// send to handler (ConnectionHandler) via writes channel
-	s.writes <- write
-
-	// IMPORTANT
-	// after sending write request, we wait for response as handler is sending true and gets blocked
-	// if this read is not present -> handler and all subsequent rpc calls are in deadlock
-	if !(<-write.response) {
-		log.Println("Update Request Accepted: Time:", time.Since(start))
-	}
-
-	// create read operation
-	read := readOp{
-		varType:  VAR_NUM_UPDATES_START,
-		response: make(chan int)}
-	// send to handler (ConnectionHandler) via reads channel
-	// log.Println("Read Request: Time:", time.Since(start))
-	s.reads <- read
-
-	// log.Println("Waiting Read Response: Time:", time.Since(start))
-	// get index to differentiate clients
-	index := <-read.response
+	// send to handler (ClientConnectionUpdateHandler) via writes channel
+	s.updateCountWrites <- write
+	index := <- write.response
 
 	log.Println("Index : ", index)
 
@@ -220,7 +198,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 				varType:  VAR_NUM_UPDATES_FINISH,
 				response: make(chan bool)}
 			// send to handler (ConnectionHandler) via writes channel
-			s.writes <- write
+			s.updateCountWrites <- write
 
 			// put result in map
 			// TODO: modify by making a go-routine to do updates
@@ -277,45 +255,52 @@ func (s *server) MidAveraging() {
 
 }
 
-// Handler for connection reads and updates
-// Takes care of update and checkin limits
-// Credit: Mark McGranaghan
-// Source: https://gobyexample.com/stateful-goroutines
-func (s *server) ConnectionHandler() {
+// Handler for communicating with coordinator for selection process
+func (s *server) ClientSelectionHandler() {
+	for {
+		select {
+		case read := <-s.checkInCountReads:
+			log.Println("Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
+			read.response <- s.numCheckIns 
+		}
+		case write := <-s.checkInCountWrites:
+			log.Println("Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
+			s.numCheckIns++
+			log.Println("Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))
+			log.Println("Handler ==> accepted", "Time:", time.Since(start))
+			write.response <- s.numCheckIns
+			
+	}
+}
+
+// Handler for maintaining counts of client connections
+func (s *server) ClientConnectionUpdateHandler() {
 	for {
 		select {
 		// read query
-		case read := <-s.reads:
+		case read := <-s.updateCountReads:
 			log.Println("Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
 			switch read.varType {
-			case VAR_NUM_CHECKINS:
-				read.response <- s.numCheckIns
 			case VAR_NUM_UPDATES_START:
 				read.response <- s.numUpdatesStart
 			case VAR_NUM_UPDATES_FINISH:
 				read.response <- s.numUpdatesFinish
 			}
 		// write query
-		case write := <-s.writes:
+		case write := <-s.updateCountWrites:
 			log.Println("Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
 			switch write.varType {
-			case VAR_NUM_CHECKINS:
-				s.numCheckIns++
-				log.Println("Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))
-				log.Println("Handler ==> accepted", "Time:", time.Since(start))
-				write.response <- true
-			case VAR_NUM_UPDATES_START:
 				s.numUpdatesStart++
 				log.Println("Handler ==> numUpdates", s.numUpdatesStart, "Time:", time.Since(start))
 				log.Println("Handler ==> accepted update", "Time:", time.Since(start))
-				write.response <- true
+				write.response <- s.numUpdatesStart
 
 			case VAR_NUM_UPDATES_FINISH:
 				s.numUpdatesFinish++
 				log.Println("Handler ==> numUpdates: ", s.numUpdatesFinish, "Finish Time:", time.Since(start))
 				log.Println("Handler ==> accepted update", "Time:", time.Since(start))
-				write.response <- true
-
+				write.response <- s.numUpdatesStart
+				
 				// if enough updates available, start FA
 				if s.numUpdatesFinish == s.numUpdatesStart {
 					// begin federated averaging process
@@ -336,13 +321,6 @@ func (s *server) ConnectionHandler() {
 	}
 }
 
-func (s *server) ClientCountUpdate(ctx context.Context, clientCount *pbIntra.ClientCount) (*pbIntra.Empty, error) {
-	return &pbIntra.Empty{}, nil
-}
-
-func (s *server) BeginConfiguration(ctx context.Context, empty *pbIntra.Empty) (*pbIntra.Empty, error) {
-	return &pbIntra.Empty{}, nil
-}
 
 // Check for error, log and exit if err
 func check(err error, errorMsg string) {
