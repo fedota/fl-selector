@@ -332,6 +332,8 @@ func (s *server) MidAveraging() {
 				Type: pbIntra.Type_FL_CHECKPOINT_WEIGHT,
 			})
 			check(err, "Unable to send checkpoint data")
+			log.Println("Selection Handler ==> Sent aggregated checkpoint and weight", "Time:", time.Since(start))
+			return
 		}
 		check(err, "Unable to read checkpoint file")
 
@@ -344,8 +346,6 @@ func (s *server) MidAveraging() {
 		})
 		check(err, "Unable to send aggregated checkpoint data")
 	}
-
-	log.Println("Selection Handler ==> Sent aggregated checkpoint and weight", "Time:", time.Since(start))
 
 }
 
