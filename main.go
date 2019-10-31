@@ -25,16 +25,18 @@ const (
 	port = ":50051"
 	modelFilePath               = "./data/model/model.h5"
 	checkpointFilePath          = "./data/checkpoint/fl_checkpoint"
+	aggregateCheckpointFilePath          = "./data/checkpoint/fl_agg_checkpoint"
 	weightUpdatesDir            = "./data/weight_updates/"
 	chunkSize                   = 64 * 1024
 	postCheckinReconnectionTime = 8000
 	postUpdateReconnectionTime  = 8000
-	estimatedRoundTime          = 8000
+	// estimatedRoundTime          = 8000
 	estimatedWaitingTime = 20000
 	checkinLimit                = 3
 	VAR_NUM_CHECKINS            = 0
 	VAR_NUM_UPDATES_START       = 1
 	VAR_NUM_UPDATES_FINISH      = 2
+	VAR_NUM_SELECTED            = 0
 )
 
 // store the result from a client
@@ -58,12 +60,14 @@ type writeOp struct {
 
 // server struct to implement gRPC Round service interface
 type server struct {
-	checkInCountReads             chan readOp
-	checkInCountWrites            chan writeOp
+	selectorId	int
+	clientCountReads             chan readOp
+	clientCountWrites            chan writeOp
 	updateCountReads             chan readOp
 	updateCountWrites            chan writeOp
 	selected          chan bool
 	numCheckIns       int
+	numSelected       int
 	numUpdatesStart   int
 	numUpdatesFinish  int
 	mu                sync.Mutex
@@ -74,7 +78,7 @@ func init() {
 	start = time.Now()
 }
 
-func main() {
+func main() {	
 	// listen
 	lis, err := net.Listen("tcp", port)
 	check(err, "Failed to listen on port"+port)
@@ -82,20 +86,26 @@ func main() {
 	srv := grpc.NewServer()
 	// server impl instance
 	flServer := &server{
+		selectorId:	1,
 		numCheckIns:       0,
 		numUpdatesStart:   0,
 		numUpdatesFinish:  0,
 		checkpointUpdates: make(map[int]flRoundClientResult),
-		reads:             make(chan readOp),
-		writes:            make(chan writeOp),
+		clientCountReads:             make(chan readOp),
+		clientCountWrites:            make(chan writeOp),
+		updateCountReads:             make(chan readOp),
+		updateCountWrites:            make(chan writeOp),
 		selected:          make(chan bool)}
-	// register FL intra server
+	// register FL round server
 	pbRound.RegisterFlRoundServer(srv, flServer)
+	// register FL intra broadcast server
+	pbIntra.RegisterFLGoalCountBroadcastServer(srv, flServer)
 
-	go flServer.CoordinatorConnectionHandler()
-	go flServer.ClientConnectionHandler()
+	go flServer.ClientSelectionHandler()
+	go flServer.ClientConnectionUpdateHandler()
 
 	// start serving
+	log.Println("Starting server on port:", port)
 	err = srv.Serve(lis)
 	check(err, "Failed to serve on port "+port)
 }
@@ -116,9 +126,12 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	log.Println("CheckIn Request: Client Name: ", checkinReq.Message, "Time:", time.Since(start))
 
 	// create a write operation
-	write := writeOp{varType:  VAR_NUM_CHECKINS}
+	write := writeOp{
+		varType:  VAR_NUM_CHECKINS, 
+		response: make(chan int)}
 	// send to handler(ClientSelectionHandler) via writes channel
-	s.writes <- write
+	s.clientCountWrites <- write
+	<-write.response
 
 	// wait for start of configuration (by ClientSelectionHandler)
 	if !(<-s.selected) {
@@ -131,7 +144,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 		return nil
 	}
 
-	// Proceed with sending checkpoint file 
+	// Proceed with sending checkpoint file to client
 
 	// open file
 	file, err = os.Open(checkpointFilePath)
@@ -173,7 +186,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	// create a write operation
 	write := writeOp{
 		varType:  VAR_NUM_UPDATES_START,
-		response: make(chan bool)}
+		response: make(chan int)}
 	// send to handler (ClientConnectionUpdateHandler) via writes channel
 	s.updateCountWrites <- write
 	index := <- write.response
@@ -196,7 +209,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			// create a write operation
 			write = writeOp{
 				varType:  VAR_NUM_UPDATES_FINISH,
-				response: make(chan bool)}
+				response: make(chan int)}
 			// send to handler (ConnectionHandler) via writes channel
 			s.updateCountWrites <- write
 
@@ -210,9 +223,10 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			log.Println("Checkpoint Update: ", s.checkpointUpdates[index])
 			s.mu.Unlock()
 
-			if !(<-write.response) {
-				log.Println("Checkpoint Update confirmed. Time:", time.Since(start))
-			}
+			<-write.response
+			// if !(<-write.response) {
+			// 	log.Println("Checkpoint Update confirmed. Time:", time.Since(start))
+			// }
 
 			return stream.SendAndClose(&pbRound.FlData{
 				IntVal: postUpdateReconnectionTime,
@@ -232,12 +246,44 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 
 }
 
+// Once broadcast to proceed with configuration is receivec from the coordinator
+// based on the count, the rountine waiting on selected channel are sent messages 
+func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*pbIntra.Empty, error) {
+	// get the number of selected clients
+	read := readOp {
+		varType: VAR_NUM_SELECTED,
+		response: make(chan int)}
+	s.clientCountReads <- read
+	numSelected := <-read.response
+
+	// get the number of checkIn clients
+	read = readOp{
+		varType: VAR_NUM_CHECKINS,
+		response: make(chan int)}
+	s.clientCountReads <- read
+	numCheckIns := <-read.response
+
+	// select num selected number of clients
+	for i := 0; i < numSelected; i++ {
+		s.selected <- true
+	}
+	// reject the rest
+	for i := 0; i < numCheckIns - numSelected; i++ {
+		s.selected <- false
+	}
+
+	return &pbIntra.Empty{}, nil
+}
+
 // Runs mid averaging
+// then sends the aggrageted checkpoint and total weight to the coordinator 
 func (s *server) MidAveraging() {
 
 	var argsList []string
-	argsList = append(argsList, "mid_averaging.py", "--cf", checkpointFilePath, "--mf", modelFilePath, "--u")
+	argsList = append(argsList, "mid_averaging.py", "--cf", aggregateCheckpointFilePath, "--mf", modelFilePath, "--u")
+	var totalWeight int64 = 0 
 	for _, v := range s.checkpointUpdates {
+		totalWeight += v.checkpointWeight
 		argsList = append(argsList, strconv.FormatInt(v.checkpointWeight, 10), v.checkpointFilePath)
 	}
 
@@ -250,8 +296,56 @@ func (s *server) MidAveraging() {
 	err := cmd.Run()
 	check(err, "Unable to run federated averaging")
 
+	var (
+		buf  []byte
+		n    int
+		file *os.File
+	)
 
-	// TODO : send mid averaged weight updates and total batch size
+	log.Println("Post Averaging ==> Sending checkpoint file", 	"Time:", time.Since(start))
+
+	// connect to the coordinator
+	conn, err := grpc.Dial(coordinatorAddress)
+	check(err, "Unable to connect to coordinator")
+	client := pbIntra.NewFlIntraClient(conn)
+
+	// initialize a context object
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	// open stream
+	updateStream, err := client.Update(ctx)
+	check(err, "Unable to send client count")
+
+	// send file
+	file, err = os.Open(aggregateCheckpointFilePath)
+	check(err, "Unable to open agg checkpoint file")
+	defer file.Close()
+	// make a buffer of a defined chunk size
+	buf = make([]byte, chunkSize)
+	for {
+		// read the content (by using chunks)
+		n, err = file.Read(buf)
+		if err == io.EOF {
+			err = updateStream.Send(&pbIntra.FlData{
+				IntVal: totalWeight,
+				Type: pbIntra.Type_FL_CHECKPOINT_WEIGHT,
+			})
+			check(err, "Unable to send checkpoint data")
+		}
+		check(err, "Unable to read checkpoint file")
+
+		// send the Aggregated FL checkpoint Data (file chunk + type: FL checkpoint)
+		err = updateStream.Send(&pbIntra.FlData{
+			Message: &pbIntra.Chunk{
+				Content: buf[:n],
+			},
+			Type: pbIntra.Type_FL_CHECKPOINT_UPDATE,
+		})
+		check(err, "Unable to send aggregated checkpoint data")
+	}
+
+	log.Println("Selection Handler ==> Sent aggregated checkpoint and weight", "Time:", time.Since(start))
 
 }
 
@@ -259,17 +353,32 @@ func (s *server) MidAveraging() {
 func (s *server) ClientSelectionHandler() {
 	for {
 		select {
-		case read := <-s.checkInCountReads:
-			log.Println("Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
-			read.response <- s.numCheckIns 
-		}
-		case write := <-s.checkInCountWrites:
-			log.Println("Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
+		case read := <-s.clientCountReads:
+			switch read.varType {
+			case VAR_NUM_UPDATES_START:
+				log.Println("Selection Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
+				read.response <- s.numCheckIns
+			case VAR_NUM_SELECTED:
+				log.Println("Selection Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
+				read.response <- s.numSelected
+			}
+		case write := <-s.clientCountWrites:
+			log.Println("Selection Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
 			s.numCheckIns++
-			log.Println("Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))
-			log.Println("Handler ==> accepted", "Time:", time.Since(start))
+			log.Println("Selection Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))	
 			write.response <- s.numCheckIns
-			
+	
+			// send client count to coordinator
+			conn, err := grpc.Dial(coordinatorAddress)
+			check(err, "Unable to connect to coordinator")
+			client := pbIntra.NewFlIntraClient(conn)
+			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: uint32(s.selectorId)})
+			check(err, "Unable to send client count")
+			log.Println("Selection Handler ==> Sent client count", s.numCheckIns, "Time:", time.Since(start))
+			if (result.Accepted) {
+				s.numSelected++
+			}
+		}
 	}
 }
 
@@ -279,7 +388,7 @@ func (s *server) ClientConnectionUpdateHandler() {
 		select {
 		// read query
 		case read := <-s.updateCountReads:
-			log.Println("Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
+			log.Println("Update Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
 			switch read.varType {
 			case VAR_NUM_UPDATES_START:
 				read.response <- s.numUpdatesStart
@@ -288,8 +397,9 @@ func (s *server) ClientConnectionUpdateHandler() {
 			}
 		// write query
 		case write := <-s.updateCountWrites:
-			log.Println("Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
+			log.Println("Update Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
 			switch write.varType {
+			case VAR_NUM_UPDATES_START:
 				s.numUpdatesStart++
 				log.Println("Handler ==> numUpdates", s.numUpdatesStart, "Time:", time.Since(start))
 				log.Println("Handler ==> accepted update", "Time:", time.Since(start))

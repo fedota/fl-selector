@@ -47,7 +47,7 @@ def mid_averaging(updates, model_path, ckpt_path):
 
                 # Weight updates calculation
                 sum_weight_updates.layers[layer_index].set_weights(np.asarray(old_sum_weight_updates_values)
-                                                                   + n * np.asarray(device_weight_updates_values))
+                                                                   + np.asarray(device_weight_updates_values))
 
 #                print("old weights: ",  old_layer_weights)
 #                print("new weights: ",  new_layer_weights)
