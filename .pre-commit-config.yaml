@@ -1,0 +1,79 @@
+
+exclude: 'genproto/'
+fail_fast: false
+
+repos:
+    -   repo: https://github.com/pre-commit/pre-commit-hooks
+        rev: v2.4.0
+        hooks:
+        -   id: trailing-whitespace
+        -   id: end-of-file-fixer
+        -   id: check-docstring-first
+        -   id: check-json
+        -   id: check-yaml
+        -   id: debug-statements
+        -   id: name-tests-test
+        -   id: requirements-txt-fixer
+        # Enable if single quote strings are needed
+        # -   id: double-quote-string-fixer
+
+    - repo: git://github.com/dnephin/pre-commit-golang
+      rev: master
+      hooks:
+        # - id: go-fmt
+        - id: go-vet
+        - id: go-lint
+        - id: go-imports
+        # - id: go-cyclo
+        #   args: [-over=15]
+        - id: validate-toml
+        - id: no-go-testing
+        # - id: gometalinter
+        - id: golangci-lint
+        # - id: go-critic
+        - id: go-unit-tests
+        - id: go-build
+    
+    -   repo: https://github.com/asottile/pyupgrade
+        rev: v1.12.0
+        hooks:
+        -   id: pyupgrade
+    -   repo: https://github.com/asottile/reorder_python_imports
+        rev: v1.4.0
+        hooks:
+        -   id: reorder-python-imports
+            language_version: python3
+    -   repo: https://github.com/asottile/add-trailing-comma
+        rev: v1.0.0
+        hooks:
+        -   id: add-trailing-comma
+    -   repo: meta
+        hooks:
+        -   id: check-hooks-apply
+        -   id: check-useless-excludes
+
+    # This hook will be enabled later
+    # -   repo: https://github.com/Lucas-C/pre-commit-hooks-bandit
+    #     rev: v1.0.3
+    #     hooks:
+    #     -   id: python-bandit-vulnerability-check
+    #         args: [-l, --recursive, -x, tests]
+    #         files: .py$
+
+    - repo: https://github.com/ambv/black
+      rev: stable
+      hooks:
+        - id: black
+          language_version: python3.6
+    -   repo: https://gitlab.com/pycqa/flake8
+        rev: 3.7.7
+        hooks:
+        -   id: flake8
+            args: ['--max-line-length=88', '--ignore=D400,E231,W503,D401,D205']
+            # More plugins: https://github.com/DmytroLitvinov/awesome-flake8-extensions
+            additional_dependencies: [
+                                      flake8-tidy-imports,
+                                      flake8-docstrings,
+                                      flake8-django,
+                                      flake8-bugbear
+                                    ]

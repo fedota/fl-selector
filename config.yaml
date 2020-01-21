@@ -1,0 +1,9 @@
+coordinator-address: "0.0.0.0:50050"
+model-path: "./data/model/model.h5"
+ckpt-path: "./data/checkpoint/fl_checkpoint"
+agg-ckpt-path: "./data/checkpoint/fl_agg_checkpoint"
+wt-updates-dir: "./data/weight_updates/"
+chunk-size: 65536 #64 * 1024
+post-checkin-reconnection-time: 8000
+post-update-reconnection-time: 8000
+estimated-waiting-time: 20000

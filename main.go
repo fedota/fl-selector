@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -15,30 +16,18 @@ import (
 	pbRound "federated-learning/fl-selector/genproto/fl_round"
 
 	"google.golang.org/grpc"
+
+	viper "github.com/spf13/viper"
 )
 
 var start time.Time
 var port string
-// constants
-const (
-	coordinatorAddress          = "localhost:50050"
-	modelFilePath               = "./data/model/model.h5"
-	checkpointFilePath          = "./data/checkpoint/fl_checkpoint"
-	aggregateCheckpointFilePath = "./data/checkpoint/fl_agg_checkpoint"
-	weightUpdatesDir            = "./data/weight_updates/"
-	chunkSize                   = 64 * 1024
-	postCheckinReconnectionTime = 8000
-	postUpdateReconnectionTime  = 8000
-	// estimatedRoundTime          = 8000
-	estimatedWaitingTime = 20000
-	checkinLimit         = 3
-)
 
 const (
-	VAR_NUM_CHECKINS       = iota
-	VAR_NUM_UPDATES_START  = iota
-	VAR_NUM_UPDATES_FINISH = iota
-	VAR_NUM_SELECTED       = iota
+	varNumCheckins      = iota
+	varNumUpdatesStart  = iota
+	varNumUpdatesFinish = iota
+	varNumSelected      = iota
 )
 
 // store the result from a client
@@ -55,14 +44,14 @@ type readOp struct {
 	response chan int
 }
 type writeOp struct {
-	varType  int
-	val      int
+	varType int
+	// val      int
 	response chan int
 }
 
 // server struct to implement gRPC Round service interface
 type server struct {
-	selectorId        int
+	selectorID        int
 	clientCountReads  chan readOp
 	clientCountWrites chan writeOp
 	updateCountReads  chan readOp
@@ -78,6 +67,15 @@ type server struct {
 
 func init() {
 	start = time.Now()
+
+	viper.SetConfigName("config") // name of config file (without extension)
+	viper.AddConfigPath(".")      // optionally look for config in the working directory
+	err := viper.ReadInConfig()   // Find and read the config file
+	if err != nil {               // Handle errors reading the config file
+		panic(fmt.Errorf("Fatal error config file: %s", err))
+	}
+
+	// TODO: Add defaults for config using viper
 }
 
 func main() {
@@ -97,7 +95,7 @@ func main() {
 	srv := grpc.NewServer()
 	// server impl instance
 	flServer := &server{
-		selectorId:        1,
+		selectorID:        1,
 		numCheckIns:       0,
 		numUpdatesStart:   0,
 		numUpdatesFinish:  0,
@@ -135,11 +133,12 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 
 	// receive check-in request
 	checkinReq, err := stream.Recv()
+	check(err, "Unable to recerive checkin request by client")
 	log.Println("CheckIn Request: Client Name: ", checkinReq.Message, "Time:", time.Since(start))
 
 	// create a write operation
 	write := writeOp{
-		varType:  VAR_NUM_CHECKINS,
+		varType:  varNumCheckins,
 		response: make(chan int)}
 	// send to handler(ClientSelectionHandler) via writes channel
 	s.clientCountWrites <- write
@@ -148,7 +147,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	if (<-write.response) == -1 || !(<-s.selected) {
 		log.Println("Not selected")
 		err := stream.Send(&pbRound.FlData{
-			IntVal: postCheckinReconnectionTime,
+			IntVal: viper.GetInt64("post-checkin-reconnection-time"),
 			Type:   pbRound.Type_FL_RECONN_TIME,
 		})
 		check(err, "Unable to send post checkin reconnection time")
@@ -158,12 +157,12 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	// Proceed with sending checkpoint file to client
 
 	// open file
-	file, err = os.Open(checkpointFilePath)
+	file, err = os.Open(viper.GetString("ckpt-path"))
 	check(err, "Unable to open checkpoint file")
 	defer file.Close()
 
 	// make a buffer of a defined chunk size
-	buf = make([]byte, chunkSize)
+	buf = make([]byte, viper.GetInt64("chunk-size"))
 
 	for {
 		// read the content (by using chunks)
@@ -196,7 +195,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 
 	// create a write operation
 	write := writeOp{
-		varType:  VAR_NUM_UPDATES_START,
+		varType:  varNumUpdatesStart,
 		response: make(chan int)}
 	// send to handler (ClientConnectionUpdateHandler) via writes channel
 	s.updateCountWrites <- write
@@ -205,8 +204,8 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	log.Println("Index : ", index)
 
 	// open the file
-	// log.Println(weightUpdatesDir + strconv.Itoa(index))
-	filePath := weightUpdatesDir + "weight_updates_" + strconv.Itoa(index)
+	// log.Println(viper.GetString("wt-updates-dir") + strconv.Itoa(index))
+	filePath := viper.GetString("wt-updates-dir") + "weight_updates_" + strconv.Itoa(index)
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	check(err, "Unable to open new checkpoint file")
 	defer file.Close()
@@ -219,7 +218,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 
 			// create a write operation
 			write = writeOp{
-				varType:  VAR_NUM_UPDATES_FINISH,
+				varType:  varNumUpdatesFinish,
 				response: make(chan int)}
 			// send to handler (ConnectionHandler) via writes channel
 			s.updateCountWrites <- write
@@ -240,7 +239,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			// }
 
 			return stream.SendAndClose(&pbRound.FlData{
-				IntVal: postUpdateReconnectionTime,
+				IntVal: viper.GetInt64("post-update-reconnection-time"),
 				Type:   pbRound.Type_FL_RECONN_TIME,
 			})
 		}
@@ -263,14 +262,14 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 	log.Println("Broadcast Received")
 	// get the number of selected clients
 	read := readOp{
-		varType:  VAR_NUM_SELECTED,
+		varType:  varNumSelected,
 		response: make(chan int)}
 	s.clientCountReads <- read
 	numSelected := <-read.response
 
 	// get the number of checkIn clients
 	read = readOp{
-		varType:  VAR_NUM_CHECKINS,
+		varType:  varNumCheckins,
 		response: make(chan int)}
 	s.clientCountReads <- read
 	numCheckIns := <-read.response
@@ -293,9 +292,10 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 // then sends the aggrageted checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
 
+	var totalWeight int64
 	var argsList []string
-	argsList = append(argsList, "mid_averaging.py", "--cf", aggregateCheckpointFilePath, "--mf", modelFilePath, "--u")
-	var totalWeight int64 = 0
+	argsList = append(argsList, "mid_averaging.py", "--cf", viper.GetString("agg-ckpt-path"), "--mf", viper.GetString("model-path"), "--u")
+
 	for _, v := range s.checkpointUpdates {
 		totalWeight += v.checkpointWeight
 		argsList = append(argsList, strconv.FormatInt(v.checkpointWeight, 10), v.checkpointFilePath)
@@ -319,7 +319,7 @@ func (s *server) MidAveraging() {
 	log.Println("Post Averaging ==> Sending checkpoint file", "Time:", time.Since(start))
 
 	// connect to the coordinator
-	conn, err := grpc.Dial(coordinatorAddress, grpc.WithInsecure())
+	conn, err := grpc.Dial(viper.GetString("coordinator-address"), grpc.WithInsecure())
 	check(err, "Unable to connect to coordinator")
 	client := pbIntra.NewFlIntraClient(conn)
 
@@ -332,11 +332,11 @@ func (s *server) MidAveraging() {
 	check(err, "Unable to send client count")
 
 	// send file
-	file, err = os.Open(aggregateCheckpointFilePath)
+	file, err = os.Open(viper.GetString("agg-ckpt-path"))
 	check(err, "Unable to open agg checkpoint file")
 	defer file.Close()
 	// make a buffer of a defined chunk size
-	buf = make([]byte, chunkSize)
+	buf = make([]byte, viper.GetInt64("chunk-size"))
 	for {
 		// read the content (by using chunks)
 		n, err = file.Read(buf)
@@ -371,10 +371,10 @@ func (s *server) ClientSelectionHandler() {
 		select {
 		case read := <-s.clientCountReads:
 			switch read.varType {
-			case VAR_NUM_CHECKINS:
+			case varNumCheckins:
 				log.Println("Selection Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
 				read.response <- s.numCheckIns
-			case VAR_NUM_SELECTED:
+			case varNumSelected:
 				log.Println("Selection Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
 				read.response <- s.numSelected
 			}
@@ -385,10 +385,10 @@ func (s *server) ClientSelectionHandler() {
 			// write.response <- s.numCheckIns
 
 			// send client count to coordinator
-			conn, err := grpc.Dial(coordinatorAddress, grpc.WithInsecure())
+			conn, err := grpc.Dial(viper.GetString("coordinator-address"), grpc.WithInsecure())
 			check(err, "Unable to connect to coordinator")
 			client := pbIntra.NewFlIntraClient(conn)
-			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: uint32(s.selectorId)})
+			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: uint32(s.selectorID)})
 			check(err, "Unable to send client count")
 			log.Println("Selection Handler ==> Sent client count", s.numCheckIns, "Time:", time.Since(start))
 			if result.Accepted {
@@ -410,22 +410,22 @@ func (s *server) ClientConnectionUpdateHandler() {
 		case read := <-s.updateCountReads:
 			log.Println("Update Handler ==> Read Query:", read.varType, "Time:", time.Since(start))
 			switch read.varType {
-			case VAR_NUM_UPDATES_START:
+			case varNumUpdatesStart:
 				read.response <- s.numUpdatesStart
-			case VAR_NUM_UPDATES_FINISH:
+			case varNumUpdatesFinish:
 				read.response <- s.numUpdatesFinish
 			}
 		// write query
 		case write := <-s.updateCountWrites:
 			log.Println("Update Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
 			switch write.varType {
-			case VAR_NUM_UPDATES_START:
+			case varNumUpdatesStart:
 				s.numUpdatesStart++
 				log.Println("Handler ==> numUpdates", s.numUpdatesStart, "Time:", time.Since(start))
 				log.Println("Handler ==> accepted update", "Time:", time.Since(start))
 				write.response <- s.numUpdatesStart
 
-			case VAR_NUM_UPDATES_FINISH:
+			case varNumUpdatesFinish:
 				s.numUpdatesFinish++
 				log.Println("Handler ==> numUpdates: ", s.numUpdatesFinish, "Finish Time:", time.Since(start))
 				log.Println("Handler ==> accepted update", "Time:", time.Since(start))
@@ -440,7 +440,7 @@ func (s *server) ClientConnectionUpdateHandler() {
 				}
 			}
 		// After wait period check if everything is fine
-		case <-time.After(estimatedWaitingTime * time.Second):
+		case <-time.After(time.Duration(viper.GetInt64("estimated-waiting-time")) * time.Second):
 			log.Println("Timeout")
 			// if checkin limit is not reached
 			// abandon round

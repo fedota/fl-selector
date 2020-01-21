@@ -1,15 +1,29 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
+"""
+Script for mid averaging
+
+This module is used to find an average for the weight updates received from
+end client devices.
+"""
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import argparse
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-import tensorflow as tf
+
 import numpy as np
-import keras
 from keras.models import load_model
 
-def mid_averaging(updates, model_path, ckpt_path):
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
+
+def mid_averaging(updates, model_path, ckpt_path):
+    """
+    Uses the weight updates received from end client devices, checkpoint weights
+    after the previous FL round and the predefined model architecture to find the
+    average weights and saves to a file
+    """
     print("Model path: ", model_path)
     print("Checkpoint path: ", ckpt_path)
     print("Updates array: ", updates)
@@ -38,20 +52,24 @@ def mid_averaging(updates, model_path, ckpt_path):
             for layer_index in range(len(sum_weight_updates.layers)):
 
                 # Old sum of weight updates
-                old_sum_weight_updates_values = sum_weight_updates.layers[layer_index].get_weights(
-                )
+                old_sum_weight_updates_values = sum_weight_updates.layers[
+                    layer_index
+                ].get_weights()
 
                 # Device weight updates
-                device_weight_updates_values = device_weight_updates.layers[layer_index].get_weights(
-                )
+                device_weight_updates_values = device_weight_updates.layers[
+                    layer_index
+                ].get_weights()
 
                 # Weight updates calculation
-                sum_weight_updates.layers[layer_index].set_weights(np.asarray(old_sum_weight_updates_values)
-                                                                   + np.asarray(device_weight_updates_values))
+                sum_weight_updates.layers[layer_index].set_weights(
+                    np.asarray(old_sum_weight_updates_values)
+                    + np.asarray(device_weight_updates_values),
+                )
 
-#                print("old weights: ",  old_layer_weights)
-#                print("new weights: ",  new_layer_weights)
-#                print("update weights: ",  update_weights.layers[i].get_weights())
+    #                print("old weights: ",  old_layer_weights)
+    #                print("new weights: ",  new_layer_weights)
+    #                print("update weights: ",  update_weights.layers[i].get_weights())
 
     # Add average of weight updates to checkpoint
     # Load model and checkpoints
@@ -60,8 +78,7 @@ def mid_averaging(updates, model_path, ckpt_path):
     for layer_index in range(len(model.layers)):
 
         # weight sum updates values
-        sum_weight_updates_values = sum_weight_updates.layers[layer_index].get_weights(
-        )
+        sum_weight_updates_values = sum_weight_updates.layers[layer_index].get_weights()
 
         model.layers[layer_index].set_weights(np.asarray(sum_weight_updates_values))
 
@@ -69,25 +86,30 @@ def mid_averaging(updates, model_path, ckpt_path):
     model.save_weights(ckpt_path)
     print("New checkpoint saved at ", ckpt_path)
 
+
 def main():
-        # define Arguments
-    parser = argparse.ArgumentParser(description='Perform Federated Averaging')
+    """
+    The script is run from the fl-selector server after all weight updates from end
+    client devices are received
+    """
+    # define Arguments
+    parser = argparse.ArgumentParser(description="Perform Federated Averaging")
     parser.add_argument("--cf", "--ckpt-file-path", required=True, nargs=1)
     parser.add_argument("--mf", "--model-file-path", required=True, nargs=1)
-    parser.add_argument("--u", "--updates", required=True, nargs='*')
+    parser.add_argument("--u", "--updates", required=True, nargs="*")
 
     # params for federated averaging
-    model_path = ''
-    ckpt_path = ''
+    model_path = ""
+    ckpt_path = ""
     updates = []
 
     # parse arguments
     args = parser.parse_args()
     for arg in vars(args):
-                # print(arg, getattr(args, arg))
-        if (arg == "mf"):
+        # print(arg, getattr(args, arg))
+        if arg == "mf":
             model_path = getattr(args, arg)[0]
-        elif (arg == "cf"):
+        elif arg == "cf":
             ckpt_path = getattr(args, arg)[0]
         else:
             update_args = getattr(args, arg)
