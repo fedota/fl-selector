@@ -33,7 +33,7 @@ repos:
         # - id: go-critic
         - id: go-unit-tests
         - id: go-build
-    
+
     -   repo: https://github.com/asottile/pyupgrade
         rev: v1.12.0
         hooks:
@@ -47,10 +47,10 @@ repos:
         rev: v1.0.0
         hooks:
         -   id: add-trailing-comma
-    -   repo: meta
-        hooks:
-        -   id: check-hooks-apply
-        -   id: check-useless-excludes
+    # -   repo: meta
+    #     hooks:
+    #     -   id: check-hooks-apply
+    #     -   id: check-useless-excludes
 
     # This hook will be enabled later
     # -   repo: https://github.com/Lucas-C/pre-commit-hooks-bandit

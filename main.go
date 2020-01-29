@@ -4,15 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"ioUtil"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
-	"sync"
-	"time"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	pbIntra "federated-learning/fl-selector/genproto/fl_intra"
 	pbRound "federated-learning/fl-selector/genproto/fl_round"
@@ -33,12 +32,6 @@ const (
 	varNumSelected      = iota
 )
 
-// store the result from a client
-type flRoundClientResult struct {
-	checkpointWeight   int64
-	checkpointFilePath string
-}
-
 // to handle read writes
 // Credit: Mark McGranaghan
 // Source: https://gobyexample.com/stateful-goroutines
@@ -54,20 +47,18 @@ type writeOp struct {
 
 // server struct to implement gRPC Round service interface
 type server struct {
-	selectorID        int
+	selectorID         string
 	coordinatorAddress string
-	flRootPath         string 
-	clientCountReads  chan readOp
-	clientCountWrites chan writeOp
-	updateCountReads  chan readOp
-	updateCountWrites chan writeOp
-	selected          chan bool // hold clients before configuration starts
-	numCheckIns       int
-	numSelected       int
-	numUpdatesStart   int
-	numUpdatesFinish  int
-	mu                sync.Mutex
-	checkpointUpdates map[int]flRoundClientResult
+	flRootPath         string
+	clientCountReads   chan readOp
+	clientCountWrites  chan writeOp
+	updateCountReads   chan readOp
+	updateCountWrites  chan writeOp
+	selected           chan bool // hold clients before configuration starts
+	numCheckIns        int
+	numSelected        int
+	numUpdatesStart    int
+	numUpdatesFinish   int
 }
 
 func init() {
@@ -88,12 +79,12 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	if len(os.Args) < 5 {
-		log.Fatalln("Usage: go run ", os.Args[0], " < Selector Id>", " <Selector Port>", " <Coordinator Address: localhost:50050>", "<FL Files Root>")
+		log.Fatalln("Usage: go run ", os.Args[0], " <Selector Id>", " <Selector Port>", "<Coordinator Address: localhost:50050>", "<FL Files Root>")
 	}
-	selectorID, _ := strconv.ParseInt(os.Args[1], 10, 32)
+	selectorID := os.Args[1]
 	port = ":" + os.Args[2]
 	coordinatorAddress := os.Args[3]
-	flRootPath:= os.Args[4] 
+	flRootPath := os.Args[4]
 
 	// listen
 	lis, err := net.Listen("tcp", port)
@@ -102,19 +93,18 @@ func main() {
 	srv := grpc.NewServer()
 	// server impl instance
 	flServer := &server{
-		selectorID:        selectorID,
+		selectorID:         selectorID,
 		coordinatorAddress: coordinatorAddress,
-		flRootPath: flRootPath,
-		numCheckIns:       0,
-		numUpdatesStart:   0,
-		numUpdatesFinish:  0,
-		numSelected:       0,
-		checkpointUpdates: make(map[int]flRoundClientResult),
-		clientCountReads:  make(chan readOp),
-		clientCountWrites: make(chan writeOp),
-		updateCountReads:  make(chan readOp),
-		updateCountWrites: make(chan writeOp),
-		selected:          make(chan bool)}
+		flRootPath:         flRootPath,
+		numCheckIns:        0,
+		numUpdatesStart:    0,
+		numUpdatesFinish:   0,
+		numSelected:        0,
+		clientCountReads:   make(chan readOp),
+		clientCountWrites:  make(chan writeOp),
+		updateCountReads:   make(chan readOp),
+		updateCountWrites:  make(chan writeOp),
+		selected:           make(chan bool)}
 	// register FL round server
 	pbRound.RegisterFlRoundServer(srv, flServer)
 	// register FL intra broadcast server
@@ -126,7 +116,7 @@ func main() {
 	// start serving
 	log.Println("Starting server on port:", port, "Time:", time.Since(start))
 	err = srv.Serve(lis)
-	check(err, "Failed to serve on port " + port)
+	check(err, "Failed to serve on port "+port)
 }
 
 // Check In rpc
@@ -134,9 +124,8 @@ func main() {
 // Selector send count to Coordinator and waits for signal from it
 func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	var (
-		buf  []byte
-		n    int
-		file *os.File
+		buf []byte
+		n   int
 	)
 	// receive check-in request
 	checkinReq, err := stream.Recv()
@@ -157,7 +146,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 			IntVal: viper.GetInt64("post-checkin-reconnection-time"),
 			Type:   pbRound.Type_FL_INT,
 		})
-		if err != nil { 
+		if err != nil {
 			log.Println("CheckIn: Unable to send reconnection time. Time:", time.Since(start))
 			return err
 		}
@@ -166,10 +155,10 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 
 	// Proceed with sending initial files
 	completeInitPath := s.flRootPath + viper.GetString("init-files-path")
-	err = filepath.Walk(completeInitPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(completeInitPath, func(path string, info os.FileInfo, errX error) error {
 		// open file
-		file, err = os.Open(path)
-		if err != nil { 
+		file, err := os.Open(path)
+		if err != nil {
 			log.Println("CheckIn: Unable to open init file. Time:", time.Since(start))
 			return err
 		}
@@ -184,24 +173,23 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 			if err == io.EOF {
 				return nil
 			}
-			if err != nil { 
+			if err != nil {
 				log.Println("CheckIn: Unable to read init file. Time:", time.Since(start))
 				return err
 			}
 			// send the FL checkpoint Data (file chunk + type: FL checkpoint)
 			err = stream.Send(&pbRound.FlData{
-				Chunk: buf[:n],
-				Type: pbRound.Type_FL_FILES,
+				Chunk:    buf[:n],
+				Type:     pbRound.Type_FL_FILES,
 				FilePath: info.Name(),
 			})
-			if err != nil { 
+			if err != nil {
 				log.Println("CheckIn: Unable to stream init file. Time:", time.Since(start))
 				return err
 			}
 		}
-		return nil
 	})
-	return err;
+	return err
 }
 
 // Update rpc
@@ -220,13 +208,13 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	log.Println("Index : ", index)
 
 	// open the file to save checkpoint received
-	checkpointfilePath := s.flRootPath + strconv.Itoa(s.selectorID) + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(index)
-	checkpointWeightPath := s.flRootPath + strconv.Itoa(s.selectorID) + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(index)
+	checkpointFilePath := s.flRootPath + s.selectorID + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(index)
+	checkpointWeightPath := s.flRootPath + s.selectorID + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(index)
 
-	file, err := os.OpenFile(checkpointfilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
-	if err != nil { 
+	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	if err != nil {
 		log.Println("Update: Unable to open file. Time:", time.Since(start))
-		os.Remove(checkpointfilePath)
+		os.Remove(checkpointFilePath)
 		return err
 	}
 	defer file.Close()
@@ -248,30 +236,30 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 				Type:   pbRound.Type_FL_INT,
 			})
 		}
-		if err != nil { 
+		if err != nil {
 			log.Println("Update: Unable to receive file. Time:", time.Since(start))
-			os.Remove(checkpointfilePath)
+			os.Remove(checkpointFilePath)
 			return err
 		}
 
 		if flData.Type == pbRound.Type_FL_FILES {
 			// write data to file
 			_, err = file.Write(flData.Chunk)
-			if err != nil { 
+			if err != nil {
 				log.Println("Update: unable to write into file. Time:", time.Since(start))
-				os.Remove(checkpointfilePath)
+				os.Remove(checkpointFilePath)
 				return err
 			}
 		} else if flData.Type == pbRound.Type_FL_INT {
 			// write weight to file
 			weightFile, err := os.OpenFile(checkpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
-			if err != nil { 
+			if err != nil {
 				log.Println("Update: Unable to open file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
 				return err
 			}
 			_, err = weightFile.Write(flData.Chunk)
-			if err != nil { 
+			if err != nil {
 				log.Println("Update: Unable to write into weight file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
 				return err
@@ -306,7 +294,7 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 		s.selected <- true
 	}
 	// reject the rest
-	for i := 0; i < numCheckIns - numSelected; i++ {
+	for i := 0; i < numCheckIns-numSelected; i++ {
 		s.selected <- false
 	}
 	return &pbIntra.Empty{}, nil
@@ -315,22 +303,21 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 // Runs mid averaging
 // then stores the aggrageted checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
-
-	var totalWeight int64
 	var argsList []string
-	argsList = append(argsList, "mid_averaging.py", "--cf", s.flRootPath + viper.GetString("agg-checkpoint-file-path"), "--mf", s.flRootPath + viper.GetString("init-files-path") + viper.GetString("model-file"), "--u")
+	var path string = s.flRootPath + s.selectorID
+	argsList = append(argsList, "mid_averaging.py", "--cf", path+viper.GetString("agg-checkpoint-file-path"), "--mf", s.flRootPath+viper.GetString("init-files-path")+viper.GetString("model-file"), "--u")
 	var totalWeight int64 = 0
 	for i := 1; i <= s.numUpdatesFinish; i++ {
-		checkpointfilePath := s.flRootPath + strconv.Itoa(s.selectorID) + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(i)
-		checkpointWeightPath := s.flRootPath + strconv.Itoa(s.selectorID) + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(i)
+		checkpointFilePath := path + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(i)
+		checkpointWeightPath := path + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(i)
 		data, err := ioutil.ReadFile(checkpointWeightPath)
-		if (err != nil) {
+		if err != nil {
 			log.Println("MidAveraging: Unable to read checkpoint weight file. Time:", time.Since(start))
 			return
 		}
-		dataInt := strconv.FormatInt(data, 10, 64)
+		dataInt, _ := strconv.ParseInt(string(data), 10, 64)
 		totalWeight += dataInt
-		argsList = append(argsList, dataInt, checkpointFilePath)
+		argsList = append(argsList, string(data), checkpointFilePath)
 	}
 
 	log.Println("MidAveraging ==> Arguments passed to federated averaging python file: ", argsList)
@@ -340,16 +327,22 @@ func (s *server) MidAveraging() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
-	if (err != nil) {
+	if err != nil {
 		log.Println("MidAveraging ==> Unable to run mid federated averaging. Time:", time.Since(start))
 		return
 	}
 
 	// store aggregated weight in file
-	aggWeightFile, err := os.OpenFile(s.flRootPath + viper.GetString("agg-checkpoint-weight-path"), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
-	if err != nil { 
+	aggWeightFile, err := os.OpenFile(path+viper.GetString("agg-checkpoint-weight-path"), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	if err != nil {
 		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
-		os.Remove(s.flRootPath + viper.GetString("agg-checkpoint-weight-path"))
+		os.Remove(path + viper.GetString("agg-checkpoint-weight-path"))
+		return
+	}
+	defer aggWeightFile.Close()
+	_, err = aggWeightFile.WriteString(string(totalWeight))
+	if err != nil {
+		log.Println("MidAveraging: unable to write to agg checkpoint weight. Time:", time.Since(start))
 		return
 	}
 
@@ -360,10 +353,10 @@ func (s *server) MidAveraging() {
 		return
 	}
 	client := pbIntra.NewFlIntraClient(conn)
-	result, err := client.SelectorAggregationComplete(context.Background(), &pbIntra.SelectorId{Id: uint32(s.selectorID)})
-	if err != nil { 
+	_, err = client.SelectorAggregationComplete(context.Background(), &pbIntra.SelectorId{Id: s.selectorID})
+	if err != nil {
 		log.Println("MidAveraging: unable to send aggregation complete to coordinator. Time:", time.Since(start))
-		return 
+		return
 	}
 	log.Println("MidAveraging: sent aggregation complete to coordinator. Time", time.Since(start))
 }
@@ -389,8 +382,8 @@ func (s *server) ClientSelectionHandler() {
 			conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure())
 			check(err, "Unable to connect to coordinator")
 			client := pbIntra.NewFlIntraClient(conn)
-			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: uint32(s.selectorID)})
-			if err != nil { 
+			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: s.selectorID})
+			if err != nil {
 				log.Println("Selection Handler: unable to send client count. Time:", time.Since(start))
 			}
 			log.Println("Selection Handler ==> Sent client count", s.numCheckIns, ". Time:", time.Since(start))
@@ -427,7 +420,7 @@ func (s *server) ClientUpdateConnectionHandler() {
 				s.numUpdatesStart++
 				log.Println("Update Handler ==> numUpdates", s.numUpdatesStart, "Time:", time.Since(start))
 				write.response <- s.numUpdatesStart
-			case VAR_NUM_UPDATES_FINISH:
+			case varNumUpdatesFinish:
 				s.numUpdatesFinish++
 				log.Println("Update Handler ==> numUpdates: ", s.numUpdatesFinish, "Finish Time:", time.Since(start))
 				write.response <- s.numUpdatesStart
@@ -441,7 +434,7 @@ func (s *server) ClientUpdateConnectionHandler() {
 				}
 			}
 		// After wait period check if everything is fine
-		case <-time.After(viper.GetInt64("estimated-waiting-time") * time.Second):
+		case <-time.After(time.Duration(viper.GetInt64("estimated-waiting-time")) * time.Second):
 			log.Println("Update Handler ==> Timeout", "Time:", time.Since(start))
 			// if checkin limit is not reached
 			// abandon round
@@ -464,5 +457,4 @@ func (s *server) resetFLVariables() {
 	s.numSelected = 0
 	s.numUpdatesStart = 0
 	s.numUpdatesFinish = 0
-	s.checkpointUpdates = make(map[int]flRoundClientResult)
 }

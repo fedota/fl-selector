@@ -1,8 +1,9 @@
-coordinator-address: "0.0.0.0:50050"
-model-path: "./data/model/model.h5"
-ckpt-path: "./data/checkpoint/fl_checkpoint"
-agg-ckpt-path: "./data/checkpoint/fl_agg_checkpoint"
-wt-updates-dir: "./data/weight_updates/"
+init-files-path: "/initFiles/"
+model-file: "model.h5"
+agg-checkpoint-file-path: "/fl_agg_checkpoint"
+agg-checkpoint-weight-path: "/fl_agg_checkpoint_weight"
+round-checkpoint-updates-dir: "/roundFiles/checkpoint_"
+round-checkpoint-weight-dir: "/roundFiles/checkpoint_weight_"
 chunk-size: 65536 #64 * 1024
 post-checkin-reconnection-time: 8000
 post-update-reconnection-time: 8000
