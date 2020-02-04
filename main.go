@@ -85,7 +85,7 @@ func main() {
 	// coordinatorAddress := os.Args[3]
 	// flRootPath := os.Args[4]
 	selectorID := viper.GetString("selector-id")
-	port := viper.GetString("port")
+	port := ":" + viper.GetString("port")
 	coordinatorAddress := viper.GetString("coordinator-address")
 	flRootPath := viper.GetString("fl-root-path")
 
@@ -159,6 +159,12 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	// Proceed with sending initial files
 	completeInitPath := s.flRootPath + viper.GetString("init-files-path")
 	err = filepath.Walk(completeInitPath, func(path string, info os.FileInfo, errX error) error {
+
+		// Skip if directory
+		if info.IsDir() {
+			return nil
+		}
+
 		// open file
 		file, err := os.Open(path)
 		if err != nil {
@@ -169,7 +175,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 
 		// make a buffer of a defined chunk size
 		buf = make([]byte, viper.GetInt64("chunk-size"))
-
+		log.Println("Info name: ", info.Name(), " Path:", path)
 		for {
 			// read the content (by using chunks)
 			n, err = file.Read(buf)
