@@ -22,7 +22,6 @@ import (
 )
 
 var start time.Time
-var port string
 
 // constants
 const (
@@ -78,13 +77,17 @@ func main() {
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	if len(os.Args) < 5 {
-		log.Fatalln("Usage: go run ", os.Args[0], " <Selector Id>", " <Selector Port>", "<Coordinator Address: localhost:50050>", "<FL Files Root>")
-	}
-	selectorID := os.Args[1]
-	port = ":" + os.Args[2]
-	coordinatorAddress := os.Args[3]
-	flRootPath := os.Args[4]
+	// if len(os.Args) < 5 {
+	// 	log.Fatalln("Usage: go run ", os.Args[0], " <Selector Id>", " <Selector Port>", "<Coordinator Address: localhost:50050>", "<FL Files Root>")
+	// }
+	// selectorID := os.Args[1]
+	// port = ":" + os.Args[2]
+	// coordinatorAddress := os.Args[3]
+	// flRootPath := os.Args[4]
+	selectorID := viper.GetString("selector-id")
+	port := viper.GetString("port")
+	coordinatorAddress := viper.GetString("coordinator-address")
+	flRootPath := viper.GetString("fl-root-path")
 
 	// listen
 	lis, err := net.Listen("tcp", port)
