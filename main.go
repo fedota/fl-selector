@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -220,6 +221,8 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	checkpointFilePath := s.flRootPath + s.selectorID + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(index)
 	checkpointWeightPath := s.flRootPath + s.selectorID + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(index)
 
+	os.MkdirAll(path.Dir(checkpointFilePath), os.ModePerm)
+	os.MkdirAll(path.Dir(checkpointWeightPath), os.ModePerm)
 	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Println("Update: Unable to open file. Time:", time.Since(start))
@@ -261,13 +264,15 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			}
 		} else if flData.Type == pbRound.Type_FL_INT {
 			// write weight to file
+			os.MkdirAll(path.Dir(checkpointWeightPath), os.ModePerm)
 			weightFile, err := os.OpenFile(checkpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 			if err != nil {
 				log.Println("Update: Unable to open file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
 				return err
 			}
-			_, err = weightFile.Write(flData.Chunk)
+			log.Println("Checkpoint weight: ", strconv.FormatInt(flData.IntVal, 10))
+			_, err = weightFile.WriteString(strconv.FormatInt(flData.IntVal, 10))
 			if err != nil {
 				log.Println("Update: Unable to write into weight file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
@@ -313,7 +318,7 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 // then stores the aggrageted checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
 	var argsList []string
-	var path string = s.flRootPath + s.selectorID
+	path := s.flRootPath + s.selectorID
 	argsList = append(argsList, "mid_averaging.py", "--cf", path+viper.GetString("agg-checkpoint-file-path"), "--mf", s.flRootPath+viper.GetString("init-files-path")+viper.GetString("model-file"), "--u")
 	var totalWeight int64 = 0
 	for i := 1; i <= s.numUpdatesFinish; i++ {
@@ -342,14 +347,16 @@ func (s *server) MidAveraging() {
 	}
 
 	// store aggregated weight in file
-	aggWeightFile, err := os.OpenFile(path+viper.GetString("agg-checkpoint-weight-path"), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	aggCheckpointWeightPath := path + viper.GetString("agg-checkpoint-weight-path")
+	os.MkdirAll(path, os.ModePerm)
+	aggWeightFile, err := os.OpenFile(aggCheckpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
 		os.Remove(path + viper.GetString("agg-checkpoint-weight-path"))
 		return
 	}
 	defer aggWeightFile.Close()
-	_, err = aggWeightFile.WriteString(string(totalWeight))
+	_, err = aggWeightFile.WriteString(strconv.FormatInt(totalWeight, 10))
 	if err != nil {
 		log.Println("MidAveraging: unable to write to agg checkpoint weight. Time:", time.Since(start))
 		return
