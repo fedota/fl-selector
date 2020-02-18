@@ -16,7 +16,7 @@ ENV GO111MODULE=on
 RUN go mod download
 
 # Build the GO program
-RUN CGO_ENABLED=0 GOOS=linux go build -a
+RUN CGO_ENABLED=0 GOOS=linux go build -a -o server
 
 ################## 2nd Build Stage ####################
 FROM tensorflow/tensorflow:latest-py3 AS final
@@ -27,8 +27,8 @@ ARG GO_SELECTOR_PATH
 WORKDIR ${GO_SELECTOR_PATH}
 
 # Copy from builder the GO executable file
-COPY --from=builder ${GO_SELECTOR_PATH}/fl-selector .
+COPY --from=builder ${GO_SELECTOR_PATH}/server .
 COPY --from=builder ${GO_SELECTOR_PATH}/config.yaml .
 
 # Execute the program upon start 
-CMD [ "./fl-selector" ]
+CMD [ "./server" ]
