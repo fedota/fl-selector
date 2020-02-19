@@ -1,14 +1,14 @@
-selector-id: "1"
+selector_id: "1"
 port: "50051"
-coordinator-address: "localhost:50050"
-fl-root-path: "../data"
-init-files-path: "/initFiles/"
-model-file: "model.h5"
-agg-checkpoint-file-path: "/fl_agg_checkpoint"
-agg-checkpoint-weight-path: "/fl_agg_checkpoint_weight"
-round-checkpoint-updates-dir: "/roundFiles/checkpoint_"
-round-checkpoint-weight-dir: "/roundFiles/checkpoint_weight_"
-chunk-size: 65536 #64 * 1024
-post-checkin-reconnection-time: 8000
-post-update-reconnection-time: 8000
-estimated-waiting-time: 20000
+coordinator_address: "localhost:50050"
+fl_root_path: "../data"
+init_files_path: "/initFiles/"
+model_file: "model.h5"
+agg_checkpoint_file_path: "/fl_agg_checkpoint"
+agg_checkpoint_weight_path: "/fl_agg_checkpoint_weight"
+round_checkpoint_updates_dir: "/roundFiles/checkpoint_"
+round_checkpoint_weight_dir: "/roundFiles/checkpoint_weight_"
+chunk_size: 65536 #64 * 1024
+post_checkin_reconnection_time: 8000
+post_update_reconnection_time: 8000
+estimated_waiting_time: 20000

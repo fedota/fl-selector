@@ -80,10 +80,10 @@ func main() {
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	selectorID := viper.GetString("selector-id")
+	selectorID := viper.GetString("selector_id")
 	port := viper.GetString("port")
-	coordinatorAddress := viper.GetString("coordinator-address")
-	flRootPath := viper.GetString("fl-root-path")
+	coordinatorAddress := viper.GetString("coordinator_address")
+	flRootPath := viper.GetString("fl_root_path")
 	address := ":" + viper.GetString("port")
 	// listen
 	lis, err := net.Listen("tcp", address)
@@ -142,7 +142,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	if (<-write.response) == -1 || !(<-s.selected) {
 		log.Println("Not selected")
 		err := stream.Send(&pbRound.FlData{
-			IntVal: viper.GetInt64("post-checkin-reconnection-time"),
+			IntVal: viper.GetInt64("post_checkin_reconnection_time"),
 			Type:   pbRound.Type_FL_INT,
 		})
 		if err != nil {
@@ -153,7 +153,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	}
 
 	// Proceed with sending initial files
-	completeInitPath := s.flRootPath + viper.GetString("init-files-path")
+	completeInitPath := s.flRootPath + viper.GetString("init_files_path")
 	err = filepath.Walk(completeInitPath, func(path string, info os.FileInfo, errX error) error {
 		// open file
 		file, err := os.Open(path)
@@ -164,7 +164,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 		defer file.Close()
 
 		// make a buffer of a defined chunk size
-		buf = make([]byte, viper.GetInt64("chunk-size"))
+		buf = make([]byte, viper.GetInt64("chunk_size"))
 
 		for {
 			// read the content (by using chunks)
@@ -207,8 +207,8 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	log.Println("Index : ", index)
 
 	// open the file to save checkpoint received
-	checkpointFilePath := s.flRootPath + s.selectorID + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(index)
-	checkpointWeightPath := s.flRootPath + s.selectorID + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(index)
+	checkpointFilePath := s.flRootPath + s.selectorID + viper.GetString("round_checkpoint_updates_dir") + strconv.Itoa(index)
+	checkpointWeightPath := s.flRootPath + s.selectorID + viper.GetString("round_checkpoint_weight_dir") + strconv.Itoa(index)
 
 	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
@@ -231,7 +231,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			s.updateCountWrites <- write
 			<-write.response // proceed
 			return stream.SendAndClose(&pbRound.FlData{
-				IntVal: viper.GetInt64("post-update-reconnection-time"),
+				IntVal: viper.GetInt64("post_update_reconnection_time"),
 				Type:   pbRound.Type_FL_INT,
 			})
 		}
@@ -304,11 +304,11 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 func (s *server) MidAveraging() {
 	var argsList []string
 	var path string = s.flRootPath + s.selectorID
-	argsList = append(argsList, "mid_averaging.py", "--cf", path+viper.GetString("agg-checkpoint-file-path"), "--mf", s.flRootPath+viper.GetString("init-files-path")+viper.GetString("model-file"), "--u")
+	argsList = append(argsList, "mid_averaging.py", "--cf", path+viper.GetString("agg_checkpoint_file_path"), "--mf", s.flRootPath+viper.GetString("init_files_path")+viper.GetString("model_file"), "--u")
 	var totalWeight int64 = 0
 	for i := 1; i <= s.numUpdatesFinish; i++ {
-		checkpointFilePath := path + viper.GetString("round-checkpoint-updates-dir") + strconv.Itoa(i)
-		checkpointWeightPath := path + viper.GetString("round-checkpoint-weight-dir") + strconv.Itoa(i)
+		checkpointFilePath := path + viper.GetString("round_checkpoint_updates_dir") + strconv.Itoa(i)
+		checkpointWeightPath := path + viper.GetString("round_checkpoint_weight_dir") + strconv.Itoa(i)
 		data, err := ioutil.ReadFile(checkpointWeightPath)
 		if err != nil {
 			log.Println("MidAveraging: Unable to read checkpoint weight file. Time:", time.Since(start))
@@ -332,10 +332,10 @@ func (s *server) MidAveraging() {
 	}
 
 	// store aggregated weight in file
-	aggWeightFile, err := os.OpenFile(path+viper.GetString("agg-checkpoint-weight-path"), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	aggWeightFile, err := os.OpenFile(path+viper.GetString("agg_checkpoint_weight_path"), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
-		os.Remove(path + viper.GetString("agg-checkpoint-weight-path"))
+		os.Remove(path + viper.GetString("agg_checkpoint_weight_path"))
 		return
 	}
 	defer aggWeightFile.Close()
@@ -433,7 +433,7 @@ func (s *server) ClientUpdateConnectionHandler() {
 				}
 			}
 		// After wait period check if everything is fine
-		case <-time.After(time.Duration(viper.GetInt64("estimated-waiting-time")) * time.Second):
+		case <-time.After(time.Duration(viper.GetInt64("estimated_waiting_time")) * time.Second):
 			log.Println("Update Handler ==> Timeout", "Time:", time.Since(start))
 			// if checkin limit is not reached
 			// abandon round
