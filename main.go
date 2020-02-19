@@ -147,6 +147,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 		})
 		if err != nil {
 			log.Println("CheckIn: Unable to send reconnection time. Time:", time.Since(start))
+			log.Println(err)
 			return err
 		}
 		return nil
@@ -159,6 +160,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 		file, err := os.Open(path)
 		if err != nil {
 			log.Println("CheckIn: Unable to open init file. Time:", time.Since(start))
+			log.Println(err)
 			return err
 		}
 		defer file.Close()
@@ -174,6 +176,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 			}
 			if err != nil {
 				log.Println("CheckIn: Unable to read init file. Time:", time.Since(start))
+				log.Println(err)
 				return err
 			}
 			// send the FL checkpoint Data (file chunk + type: FL checkpoint)
@@ -184,6 +187,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 			})
 			if err != nil {
 				log.Println("CheckIn: Unable to stream init file. Time:", time.Since(start))
+				log.Println(err)
 				return err
 			}
 		}
@@ -214,6 +218,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	if err != nil {
 		log.Println("Update: Unable to open file. Time:", time.Since(start))
 		os.Remove(checkpointFilePath)
+		log.Println(err)
 		return err
 	}
 	defer file.Close()
@@ -238,6 +243,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 		if err != nil {
 			log.Println("Update: Unable to receive file. Time:", time.Since(start))
 			os.Remove(checkpointFilePath)
+			log.Println(err)
 			return err
 		}
 
@@ -255,6 +261,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			if err != nil {
 				log.Println("Update: Unable to open file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
+				log.Println(err)
 				return err
 			}
 			_, err = weightFile.Write(flData.Chunk)
@@ -312,6 +319,7 @@ func (s *server) MidAveraging() {
 		data, err := ioutil.ReadFile(checkpointWeightPath)
 		if err != nil {
 			log.Println("MidAveraging: Unable to read checkpoint weight file. Time:", time.Since(start))
+			log.Println(err)
 			return
 		}
 		dataInt, _ := strconv.ParseInt(string(data), 10, 64)
@@ -328,6 +336,7 @@ func (s *server) MidAveraging() {
 	err := cmd.Run()
 	if err != nil {
 		log.Println("MidAveraging ==> Unable to run mid federated averaging. Time:", time.Since(start))
+		log.Println(err)
 		return
 	}
 
@@ -336,12 +345,14 @@ func (s *server) MidAveraging() {
 	if err != nil {
 		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
 		os.Remove(path + viper.GetString("agg_checkpoint_weight_path"))
+		log.Println(err)
 		return
 	}
 	defer aggWeightFile.Close()
 	_, err = aggWeightFile.WriteString(string(totalWeight))
 	if err != nil {
 		log.Println("MidAveraging: unable to write to agg checkpoint weight. Time:", time.Since(start))
+		log.Println(err)
 		return
 	}
 
@@ -349,12 +360,14 @@ func (s *server) MidAveraging() {
 	conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure())
 	if err != nil {
 		log.Println("MidAveraging: unable to connect to coordinator. Time:", time.Since(start))
+		log.Println(err)
 		return
 	}
 	client := pbIntra.NewFlIntraClient(conn)
 	_, err = client.SelectorAggregationComplete(context.Background(), &pbIntra.SelectorId{Id: s.selectorID})
 	if err != nil {
 		log.Println("MidAveraging: unable to send aggregation complete to coordinator. Time:", time.Since(start))
+		log.Println(err)
 		return
 	}
 	log.Println("MidAveraging: sent aggregation complete to coordinator. Time", time.Since(start))
@@ -384,15 +397,17 @@ func (s *server) ClientSelectionHandler() {
 			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: s.selectorID})
 			if err != nil {
 				log.Println("Selection Handler: unable to send client count. Time:", time.Since(start))
-			}
-			log.Println("Selection Handler ==> Sent client count", s.numCheckIns, ". Time:", time.Since(start))
-			// accepted connection
-			if result.Accepted {
-				s.numSelected++
-				// select the client for configuration
-				write.response <- s.numSelected
+				log.Println(err)
 			} else {
-				write.response <- -1
+				log.Println("Selection Handler ==> Sent client count", s.numCheckIns, ". Time:", time.Since(start))
+				// accepted connection
+				if result.Accepted {
+					s.numSelected++
+					// select the client for configuration
+					write.response <- s.numSelected
+				} else {
+					write.response <- -1
+				}
 			}
 		}
 	}
