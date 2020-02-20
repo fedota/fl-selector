@@ -24,7 +24,6 @@ FROM tensorflow/tensorflow:latest-py3 AS final
 RUN pip3 install --upgrade keras
 
 ARG GO_SELECTOR_PATH
-WORKDIR ${GO_SELECTOR_PATH}
 
 # Copy from builder the GO executable file
 COPY --from=builder ${GO_SELECTOR_PATH}/server .
