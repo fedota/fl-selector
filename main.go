@@ -154,8 +154,13 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	}
 
 	// Proceed with sending initial files
-	completeInitPath := s.flRootPath + viper.GetString("INIT_FILES_PATH")
+	completeInitPath := filepath.Join(s.flRootPath, viper.GetString("INIT_FILES_PATH"))
 	err = filepath.Walk(completeInitPath, func(path string, info os.FileInfo, errX error) error {
+
+		if info.IsDir() {
+			return nil
+		}
+
 		// open file
 		file, err := os.Open(path)
 		if err != nil {
@@ -211,8 +216,8 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	log.Println("Index : ", index)
 
 	// open the file to save checkpoint received
-	checkpointFilePath := s.flRootPath + s.selectorID + viper.GetString("ROUND_CHECKPOINT_UPDATES_DIR") + strconv.Itoa(index)
-	checkpointWeightPath := s.flRootPath + s.selectorID + viper.GetString("ROUND_CHECKPOINT_WEIGHT_DIR") + strconv.Itoa(index)
+	checkpointFilePath := filepath.Join(s.flRootPath, s.selectorID, viper.GetString("ROUND_CHECKPOINT_UPDATES_DIR")) + strconv.Itoa(index)
+	checkpointWeightPath := filepath.Join(s.flRootPath, s.selectorID, viper.GetString("ROUND_CHECKPOINT_WEIGHT_DIR")) + strconv.Itoa(index)
 
 	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
@@ -310,12 +315,12 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 // then stores the aggrageted checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
 	var argsList []string
-	var path string = s.flRootPath + s.selectorID
-	argsList = append(argsList, "mid_averaging.py", "--cf", path+viper.GetString("AGG_CHECKPOINT_FILE_PATH"), "--mf", s.flRootPath+viper.GetString("INIT_FILES_PATH")+viper.GetString("MODEL_FILE"), "--u")
+	var path = filepath.Join(s.flRootPath, s.selectorID)
+	argsList = append(argsList, "mid_averaging.py", "--cf", filepath.Join(path, viper.GetString("AGG_CHECKPOINT_FILE_PATH")), "--mf", filepath.Join(s.flRootPath, viper.GetString("INIT_FILES_PATH"), viper.GetString("MODEL_FILE")), "--u")
 	var totalWeight int64 = 0
 	for i := 1; i <= s.numUpdatesFinish; i++ {
-		checkpointFilePath := path + viper.GetString("ROUND_CHECKPOINT_UPDATES_DIR") + strconv.Itoa(i)
-		checkpointWeightPath := path + viper.GetString("ROUND_CHECKPOINT_WEIGHT_DIR") + strconv.Itoa(i)
+		checkpointFilePath := filepath.Join(path, viper.GetString("ROUND_CHECKPOINT_UPDATES_DIR")) + strconv.Itoa(i)
+		checkpointWeightPath := filepath.Join(path, viper.GetString("ROUND_CHECKPOINT_WEIGHT_DIR")) + strconv.Itoa(i)
 		data, err := ioutil.ReadFile(checkpointWeightPath)
 		if err != nil {
 			log.Println("MidAveraging: Unable to read checkpoint weight file. Time:", time.Since(start))
@@ -341,10 +346,10 @@ func (s *server) MidAveraging() {
 	}
 
 	// store aggregated weight in file
-	aggWeightFile, err := os.OpenFile(path+viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH"), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	aggWeightFile, err := os.OpenFile(filepath.Join(path, viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH")), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
-		os.Remove(path + viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH"))
+		os.Remove(filepath.Join(path, viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH")))
 		log.Println(err)
 		return
 	}
