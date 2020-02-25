@@ -19,9 +19,7 @@ RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -a -o server
 
 ################## 2nd Build Stage ####################
-FROM tensorflow/tensorflow:latest-py3 AS final
-
-RUN pip3 install --upgrade keras
+FROM fedota/tf AS final
 
 ARG GO_SELECTOR_PATH
 
