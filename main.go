@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -157,6 +158,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	completeInitPath := filepath.Join(s.flRootPath, viper.GetString("INIT_FILES_PATH"))
 	err = filepath.Walk(completeInitPath, func(path string, info os.FileInfo, errX error) error {
 
+		// Skip if directory
 		if info.IsDir() {
 			return nil
 		}
@@ -219,6 +221,9 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	checkpointFilePath := filepath.Join(s.flRootPath, s.selectorID, viper.GetString("ROUND_CHECKPOINT_UPDATES_DIR")) + strconv.Itoa(index)
 	checkpointWeightPath := filepath.Join(s.flRootPath, s.selectorID, viper.GetString("ROUND_CHECKPOINT_WEIGHT_DIR")) + strconv.Itoa(index)
 
+	os.MkdirAll(path.Dir(checkpointFilePath), os.ModePerm)
+	os.MkdirAll(path.Dir(checkpointWeightPath), os.ModePerm)
+
 	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Println("Update: Unable to open file. Time:", time.Since(start))
@@ -262,6 +267,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 			}
 		} else if flData.Type == pbRound.Type_FL_INT {
 			// write weight to file
+			os.MkdirAll(path.Dir(checkpointWeightPath), os.ModePerm)
 			weightFile, err := os.OpenFile(checkpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 			if err != nil {
 				log.Println("Update: Unable to open file. Time:", time.Since(start))
@@ -269,7 +275,8 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 				log.Println(err)
 				return err
 			}
-			_, err = weightFile.Write(flData.Chunk)
+			log.Println("Checkpoint weight: ", strconv.FormatInt(flData.IntVal, 10))
+			_, err = weightFile.WriteString(strconv.FormatInt(flData.IntVal, 10))
 			if err != nil {
 				log.Println("Update: Unable to write into weight file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
@@ -346,15 +353,17 @@ func (s *server) MidAveraging() {
 	}
 
 	// store aggregated weight in file
-	aggWeightFile, err := os.OpenFile(filepath.Join(path, viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH")), os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	aggCheckpointWeightPath := filepath.Join(path, viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH"))
+	os.MkdirAll(path, os.ModePerm)
+	aggWeightFile, err := os.OpenFile(aggCheckpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
-		os.Remove(filepath.Join(path, viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH")))
+		os.Remove(aggCheckpointWeightPath)
 		log.Println(err)
 		return
 	}
 	defer aggWeightFile.Close()
-	_, err = aggWeightFile.WriteString(string(totalWeight))
+	_, err = aggWeightFile.WriteString(strconv.FormatInt(totalWeight, 10))
 	if err != nil {
 		log.Println("MidAveraging: unable to write to agg checkpoint weight. Time:", time.Since(start))
 		log.Println(err)
