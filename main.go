@@ -14,15 +14,15 @@ import (
 	"strconv"
 	"time"
 
-	pbIntra "federated-learning/fl-selector/genproto/fl_intra"
-	pbRound "federated-learning/fl-selector/genproto/fl_round"
-
-	"google.golang.org/grpc"
-
 	viper "github.com/spf13/viper"
+	"google.golang.org/grpc"
+	
+	pbIntra "fedota/fl-selector/genproto/fl_intra"
+	pbRound "fedota/fl-selector/genproto/fl_round"
 )
 
 var start time.Time
+
 
 // constants
 const (
@@ -32,9 +32,8 @@ const (
 	varNumSelected      = iota
 )
 
+
 // to handle read writes
-// Credit: Mark McGranaghan
-// Source: https://gobyexample.com/stateful-goroutines
 type readOp struct {
 	varType  int
 	response chan int
@@ -44,6 +43,7 @@ type writeOp struct {
 	// val      int
 	response chan int
 }
+
 
 // server struct to implement gRPC Round service interface
 type server struct {
@@ -61,6 +61,7 @@ type server struct {
 	numUpdatesFinish   int
 }
 
+
 func init() {
 	start = time.Now()
 
@@ -75,6 +76,7 @@ func init() {
 
 	// TODO: Add defaults for config using viper
 }
+
 
 func main() {
 
@@ -105,6 +107,7 @@ func main() {
 		updateCountReads:   make(chan readOp),
 		updateCountWrites:  make(chan writeOp),
 		selected:           make(chan bool)}
+
 	// register FL round server
 	pbRound.RegisterFlRoundServer(srv, flServer)
 	// register FL intra broadcast server
@@ -118,6 +121,7 @@ func main() {
 	err = srv.Serve(lis)
 	check(err, "Failed to serve on port "+port)
 }
+
 
 // Check In rpc
 // Clients check in with FL selector
@@ -140,7 +144,10 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	s.clientCountWrites <- write
 
 	// wait for start of configuration (by ClientSelectionHandler)
+	// <-write.response waits for that client to be selected by client 
+	// selected clients then have to wait (on the s.selected channel) for configuation to be started once goal count is reached 
 	if (<-write.response) == -1 || !(<-s.selected) {
+		// not selected
 		log.Println("Not selected")
 		err := stream.Send(&pbRound.FlData{
 			IntVal: viper.GetInt64("POST_CHECKIN_RECONNECTION_TIME"),
@@ -201,6 +208,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	})
 	return err
 }
+
 
 // Update rpc
 // Accumulate FL checkpoint update sent by client
@@ -287,8 +295,9 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	}
 }
 
+
 // Once broadcast to proceed with configuration phase is received from the coordinator
-// based on the count, the rountine waiting on selected channel are sent messages to proceed
+// based on the count of rountines waiting on selected channel, they are sent messages to proceed
 func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*pbIntra.Empty, error) {
 	log.Println("Broadcast Received")
 	// get the number of selected clients
@@ -318,9 +327,11 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 	return &pbIntra.Empty{}, nil
 }
 
-// Runs mid averaging
+
+// Runs mid averaging (federated averaging wrt it clients)
 // then stores the aggrageted checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
+	// build arguments for federated averaging process
 	var argsList []string
 	var path = filepath.Join(s.flRootPath, s.selectorID)
 	argsList = append(argsList, "mid_averaging.py", "--cf", filepath.Join(path, viper.GetString("AGG_CHECKPOINT_FILE_PATH")), "--mf", filepath.Join(s.flRootPath, viper.GetString("INIT_FILES_PATH"), viper.GetString("MODEL_FILE")), "--u")
@@ -387,6 +398,7 @@ func (s *server) MidAveraging() {
 	log.Println("MidAveraging: sent aggregation complete to coordinator. Time", time.Since(start))
 }
 
+
 // Handler for communicating with coordinator for selection process for clients
 func (s *server) ClientSelectionHandler() {
 	for {
@@ -404,6 +416,8 @@ func (s *server) ClientSelectionHandler() {
 			log.Println("Selection Handler ==> Write Query:", write.varType, "Time:", time.Since(start))
 			s.numCheckIns++
 			log.Println("Selection Handler ==> numCheckIns", s.numCheckIns, "Time:", time.Since(start))
+
+			// TODO reject clients if we know they won't be selected after limit is reached
 			// send client count to coordinator
 			conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure())
 			check(err, "Unable to connect to coordinator")
@@ -426,6 +440,7 @@ func (s *server) ClientSelectionHandler() {
 		}
 	}
 }
+
 
 // Handler for maintaining counts of client connections updated received
 func (s *server) ClientUpdateConnectionHandler() {
@@ -461,16 +476,16 @@ func (s *server) ClientUpdateConnectionHandler() {
 					s.resetFLVariables()
 				}
 			}
-		// After wait period check if everything is fine
-		case <-time.After(time.Duration(viper.GetInt64("ESTIMATED_WAITING_TIME")) * time.Second):
-			log.Println("Update Handler ==> Timeout", "Time:", time.Since(start))
-			// if checkin limit is not reached
-			// abandon round
-			// TODO: after checkin is done
-
-			// TODO: Decide about updates not received in time
 		}
 	}
+}
+
+// reset variables 
+func (s *server) resetFLVariables() {
+	s.numCheckIns = 0
+	s.numSelected = 0
+	s.numUpdatesStart = 0
+	s.numUpdatesFinish = 0
 }
 
 // Check for error, log and exit if err
@@ -478,11 +493,4 @@ func check(err error, errorMsg string) {
 	if err != nil {
 		log.Fatalf(errorMsg, " ==> ", err)
 	}
-}
-
-func (s *server) resetFLVariables() {
-	s.numCheckIns = 0
-	s.numSelected = 0
-	s.numUpdatesStart = 0
-	s.numUpdatesFinish = 0
 }

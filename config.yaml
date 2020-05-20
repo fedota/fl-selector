@@ -1,7 +1,7 @@
 SELECTOR_ID: "1"
 PORT: "50051"
 COORDINATOR_ADDRESS: "localhost:50050"
-FL_ROOT_PATH: "../data"
+FL_ROOT_PATH: "/data"
 INIT_FILES_PATH: "/initFiles/"
 MODEL_FILE: "model.h5"
 AGG_CHECKPOINT_FILE_PATH: "/fl_agg_checkpoint"

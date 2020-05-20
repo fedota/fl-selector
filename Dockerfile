@@ -1,4 +1,4 @@
-ARG GO_SELECTOR_PATH="/go/src/federated-learning/fl-selector"
+ARG GO_SELECTOR_PATH="/go/src/fedota/fl-selector"
 
 ################## 1st Build Stage ####################
 FROM golang:alpine AS builder
