@@ -19,14 +19,21 @@ RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -a -o server
 
 ################## 2nd Build Stage ####################
-FROM fedota/tf AS final
+FROM tensorflow/tensorflow:latest-py3
+
+# Install dependencies
+RUN pip3 install keras
+
+RUN mkdir -p /server_dir
 
 ARG GO_SELECTOR_PATH
 
 # Copy from builder the GO executable file
-COPY --from=builder ${GO_SELECTOR_PATH}/server .
-COPY --from=builder ${GO_SELECTOR_PATH}/config.yaml .
-COPY --from=builder ${GO_SELECTOR_PATH}/mid_averaging.py .
+COPY --from=builder ${GO_SELECTOR_PATH}/server /server_dir
+COPY --from=builder ${GO_SELECTOR_PATH}/config.yaml /server_dir
+COPY --from=builder ${GO_SELECTOR_PATH}/mid_averaging.py /server_dir
+
+WORKDIR /server_dir
 
 # Execute the program upon start 
 CMD [ "./server" ]
