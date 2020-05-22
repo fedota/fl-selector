@@ -47,17 +47,17 @@ Channel are used, as shown below, to make go-routines handling connection reques
 ## Setup 
 1. Compile protobuf needed in [fl-misc](https://github.com/fedota/fl-misc) by `fl-proto.sh` script
 2. Build the docker image:
-	`docker build -t fl-selector .`
+	`docker build -t fedota/fl-selector .`
 
 - Run the container using:
-`docker run --rm --name sel -p 50051:50051 -v /path/to/shared/dir:/data fl-selector` \
+`docker run --rm --name sel -p 50051:50051 -v /path/to/shared/dir:/data fedota/fl-selector` \
 If running *fl-coordinator* and *fl-selector* locally replace `-p 50051:50051` with `--network="host"`\
-For example, `docker run --rm --name sel --network="host" -v $PWD/../data:/data fl-selector` 
+For example, `docker run --rm --name sel --network="host" -v $PWD/../data:/data fedota/fl-selector` 
 
 - To inspect the running container, open bash using:
 `docker exec -t -i sel /bin/bash`
 
 - To simply run and inspect a new container, execute:
-`docker run -it fl-selector bash`
+`docker run -it fedota/fl-selector bash`
 
 [Optional] Install go modules dependencies files by `go test`
