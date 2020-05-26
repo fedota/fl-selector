@@ -1,5 +1,6 @@
-SELECTOR_ID: "1"
-PORT: "50051"
+SELECTOR_ID: "1" # container name / localhost
+SELECTOR_SERVICE: # not set when running locally
+PORT: "50051" # use different port when running locally
 COORDINATOR_ADDRESS: "localhost:50050"
 FL_ROOT_PATH: "../data"
 INIT_FILES_PATH: "/initFiles/"

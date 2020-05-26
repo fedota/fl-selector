@@ -83,11 +83,19 @@ func main() {
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	selectorID := viper.GetString("SELECTOR_ID")
 	port := viper.GetString("PORT")
+	selectorID := viper.GetString("SELECTOR_ID")
+	log.Println(viper.GetString("SELECTOR_SERVICE"))
+	if viper.IsSet("SELECTOR_SERVICE") {
+		selectorID += "." + viper.GetString("SELECTOR_SERVICE") + ":" + port
+	} else {
+		selectorID += ":" + port
+	}
+	log.Println(selectorID)
+
 	coordinatorAddress := viper.GetString("COORDINATOR_ADDRESS")
 	flRootPath := viper.GetString("FL_ROOT_PATH")
-	address := ":" + viper.GetString("PORT")
+	address := ":" + port
 	// listen
 	lis, err := net.Listen("tcp", address)
 	check(err, "Failed to listen on "+address)
@@ -133,7 +141,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	)
 	// receive check-in request
 	checkinReq, err := stream.Recv()
-	check(err, "Unable to recerive checkin request by client")
+	check(err, "Unable to receive checkin request by client")
 	log.Println("CheckIn Request: Client Name: ", checkinReq.Message, "Time:", time.Since(start))
 
 	// create a write operation
@@ -145,7 +153,7 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 
 	// wait for start of configuration (by ClientSelectionHandler)
 	// <-write.response waits for that client to be selected by client 
-	// selected clients then have to wait (on the s.selected channel) for configuation to be started once goal count is reached 
+	// selected clients then have to wait (on the s.selected channel) for configuration to be started once goal count is reached 
 	if (<-write.response) == -1 || !(<-s.selected) {
 		// not selected
 		log.Println("Not selected")
@@ -297,7 +305,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 
 
 // Once broadcast to proceed with configuration phase is received from the coordinator
-// based on the count of rountines waiting on selected channel, they are sent messages to proceed
+// based on the count of routines waiting on selected channel, they are sent messages to proceed
 func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*pbIntra.Empty, error) {
 	log.Println("Broadcast Received")
 	// get the number of selected clients
@@ -329,7 +337,7 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 
 
 // Runs mid averaging (federated averaging wrt it clients)
-// then stores the aggrageted checkpoint and total weight to the coordinator
+// then stores the aggregated checkpoint and total weight to the coordinator
 func (s *server) MidAveraging() {
 	// build arguments for federated averaging process
 	var argsList []string
@@ -368,7 +376,7 @@ func (s *server) MidAveraging() {
 	os.MkdirAll(path, os.ModePerm)
 	aggWeightFile, err := os.OpenFile(aggCheckpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
-		log.Println("Mid Averaging: Unable to openagg checkpoint weight file. Time:", time.Since(start))
+		log.Println("Mid Averaging: Unable to open agg checkpoint weight file. Time:", time.Since(start))
 		os.Remove(aggCheckpointWeightPath)
 		log.Println(err)
 		return
