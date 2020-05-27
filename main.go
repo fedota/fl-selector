@@ -16,13 +16,12 @@ import (
 
 	viper "github.com/spf13/viper"
 	"google.golang.org/grpc"
-	
+
 	pbIntra "fedota/fl-selector/genproto/fl_intra"
 	pbRound "fedota/fl-selector/genproto/fl_round"
 )
 
 var start time.Time
-
 
 // constants
 const (
@@ -31,7 +30,6 @@ const (
 	varNumUpdatesFinish = iota
 	varNumSelected      = iota
 )
-
 
 // to handle read writes
 type readOp struct {
@@ -43,7 +41,6 @@ type writeOp struct {
 	// val      int
 	response chan int
 }
-
 
 // server struct to implement gRPC Round service interface
 type server struct {
@@ -61,7 +58,6 @@ type server struct {
 	numUpdatesFinish   int
 }
 
-
 func init() {
 	start = time.Now()
 
@@ -76,7 +72,6 @@ func init() {
 
 	// TODO: Add defaults for config using viper
 }
-
 
 func main() {
 
@@ -130,7 +125,6 @@ func main() {
 	check(err, "Failed to serve on port "+port)
 }
 
-
 // Check In rpc
 // Clients check in with FL selector
 // Selector send count to Coordinator and waits for signal from it
@@ -152,8 +146,8 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	s.clientCountWrites <- write
 
 	// wait for start of configuration (by ClientSelectionHandler)
-	// <-write.response waits for that client to be selected by client 
-	// selected clients then have to wait (on the s.selected channel) for configuration to be started once goal count is reached 
+	// <-write.response waits for that client to be selected by client
+	// selected clients then have to wait (on the s.selected channel) for configuration to be started once goal count is reached
 	if (<-write.response) == -1 || !(<-s.selected) {
 		// not selected
 		log.Println("Not selected")
@@ -217,7 +211,6 @@ func (s *server) CheckIn(stream pbRound.FlRound_CheckInServer) error {
 	return err
 }
 
-
 // Update rpc
 // Accumulate FL checkpoint update sent by client
 func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
@@ -240,7 +233,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 	os.MkdirAll(path.Dir(checkpointFilePath), os.ModePerm)
 	os.MkdirAll(path.Dir(checkpointWeightPath), os.ModePerm)
 
-	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	file, err := os.OpenFile(checkpointFilePath, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		log.Println("Update: Unable to open file. Time:", time.Since(start))
 		os.Remove(checkpointFilePath)
@@ -284,7 +277,7 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 		} else if flData.Type == pbRound.Type_FL_INT {
 			// write weight to file
 			os.MkdirAll(path.Dir(checkpointWeightPath), os.ModePerm)
-			weightFile, err := os.OpenFile(checkpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+			weightFile, err := os.OpenFile(checkpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 			if err != nil {
 				log.Println("Update: Unable to open file. Time:", time.Since(start))
 				os.Remove(checkpointWeightPath)
@@ -302,7 +295,6 @@ func (s *server) Update(stream pbRound.FlRound_UpdateServer) error {
 		}
 	}
 }
-
 
 // Once broadcast to proceed with configuration phase is received from the coordinator
 // based on the count of routines waiting on selected channel, they are sent messages to proceed
@@ -334,7 +326,6 @@ func (s *server) GoalCountReached(ctx context.Context, empty *pbIntra.Empty) (*p
 	}
 	return &pbIntra.Empty{}, nil
 }
-
 
 // Runs mid averaging (federated averaging wrt it clients)
 // then stores the aggregated checkpoint and total weight to the coordinator
@@ -374,7 +365,7 @@ func (s *server) MidAveraging() {
 	// store aggregated weight in file
 	aggCheckpointWeightPath := filepath.Join(path, viper.GetString("AGG_CHECKPOINT_WEIGHT_PATH"))
 	os.MkdirAll(path, os.ModePerm)
-	aggWeightFile, err := os.OpenFile(aggCheckpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModeAppend)
+	aggWeightFile, err := os.OpenFile(aggCheckpointWeightPath, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		log.Println("Mid Averaging: Unable to open agg checkpoint weight file. Time:", time.Since(start))
 		os.Remove(aggCheckpointWeightPath)
@@ -405,7 +396,6 @@ func (s *server) MidAveraging() {
 	}
 	log.Println("MidAveraging: sent aggregation complete to coordinator. Time", time.Since(start))
 }
-
 
 // Handler for communicating with coordinator for selection process for clients
 func (s *server) ClientSelectionHandler() {
@@ -449,7 +439,6 @@ func (s *server) ClientSelectionHandler() {
 	}
 }
 
-
 // Handler for maintaining counts of client connections updated received
 func (s *server) ClientUpdateConnectionHandler() {
 	for {
@@ -488,7 +477,7 @@ func (s *server) ClientUpdateConnectionHandler() {
 	}
 }
 
-// reset variables 
+// reset variables
 func (s *server) resetFLVariables() {
 	s.numCheckIns = 0
 	s.numSelected = 0

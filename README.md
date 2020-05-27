@@ -50,9 +50,9 @@ Channel are used, as shown below, to make go-routines handling connection reques
 	`docker build -t fedota/fl-selector .`
 
 - Run the container using:
-`docker run --rm --name sel -p 50051:50051 -v /path/to/shared/dir:/data fedota/fl-selector` \
+`docker run --rm --name sel -p 50051:50051 -v /path/to/shared/dir:/data -v /path_to/config.yaml:/server_dir/config.yaml fedota/fl-selector` \
 If running *fl-coordinator* and *fl-selector* locally replace `-p 50051:50051` with `--network="host"`\
-For example, `docker run --rm --name sel --network="host" -v $PWD/../data:/data fedota/fl-selector` 
+For example, `docker run --rm --name sel --network="host" -v $PWD/../data:/data -v $PWD/config.yaml:/server_dir/config.yaml fedota/fl-selector` 
 
 - To inspect the running container, open bash using:
 `docker exec -t -i sel /bin/bash`
