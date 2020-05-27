@@ -84,7 +84,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	port := viper.GetString("PORT")
-	selectorID := viper.GetString("SELECTOR_ID")
+	selectorID := viper.GetString("HOSTNAME")
 	log.Println(viper.GetString("SELECTOR_SERVICE"))
 	if viper.IsSet("SELECTOR_SERVICE") {
 		selectorID += "." + viper.GetString("SELECTOR_SERVICE") + ":" + port

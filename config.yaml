@@ -1,6 +1,6 @@
-SELECTOR_ID: "1" # container name / localhost
-SELECTOR_SERVICE: # not set when running locally
-PORT: "50051" # use different port when running locally
+SELECTOR_SERVICE: # should not be set when running locally
+HOSTNAME: "localhost" # localhost when running locally or using docker
+PORT: "50051" # use different port when running locally or using docker
 COORDINATOR_ADDRESS: "localhost:50050"
 FL_ROOT_PATH: "../data"
 INIT_FILES_PATH: "/initFiles/"
