@@ -93,7 +93,7 @@ func main() {
 	address := ":" + port
 	// listen
 	lis, err := net.Listen("tcp", address)
-	check(err, "Failed to listen on "+address)
+	check(err, "Failed to listen on " + address)
 
 	srv := grpc.NewServer()
 	// server impl instance
@@ -381,7 +381,7 @@ func (s *server) MidAveraging() {
 	}
 
 	// send indication of mid averaging completed to coordinator
-	conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure())
+	conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		log.Println("MidAveraging: unable to connect to coordinator. Time:", time.Since(start))
 		log.Println(err)
@@ -417,7 +417,7 @@ func (s *server) ClientSelectionHandler() {
 
 			// TODO reject clients if we know they won't be selected after limit is reached
 			// send client count to coordinator
-			conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure())
+			conn, err := grpc.Dial(s.coordinatorAddress, grpc.WithInsecure(), grpc.WithBlock())
 			check(err, "Unable to connect to coordinator")
 			client := pbIntra.NewFlIntraClient(conn)
 			result, err := client.ClientCountUpdate(context.Background(), &pbIntra.ClientCount{Count: uint32(s.numCheckIns), Id: s.selectorID})
